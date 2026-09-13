@@ -1,0 +1,9 @@
+{
+  "name": "emergensy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Echtzeit-Plattform für Gefahrenabwehr und Risikomanagement",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
