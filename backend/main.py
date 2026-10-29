@@ -1,11 +1,13 @@
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import ssl
 import time
 from contextlib import closing
+from datetime import date, datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Literal
@@ -65,6 +67,16 @@ def initialize_database():
                 locked_until REAL NOT NULL DEFAULT 0
             )"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS situation_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                author TEXT NOT NULL,
+                event_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
         connection.commit()
 
 
@@ -109,6 +121,13 @@ class EventStatusUpdate(BaseModel):
 class AdminLogin(BaseModel):
     username: str = Field(min_length=1, max_length=80)
     password: str = Field(min_length=1, max_length=200)
+
+
+class SituationLogCreate(BaseModel):
+    entry_type: Literal["observation", "decision", "measure", "resource", "handover"]
+    content: str = Field(min_length=1, max_length=1200)
+    author: str = Field(min_length=1, max_length=80)
+    event_id: int | None = Field(default=None, ge=1)
 
 
 def serialize_event(row: sqlite3.Row):
@@ -261,12 +280,132 @@ def delete_event(event_id: int, _: str = Depends(require_admin)):
     return Response(status_code=204)
 
 
+def situation_log_filters(
+    entry_type: Literal["observation", "decision", "measure", "resource", "handover"] | None,
+    event_id: int | None,
+    from_date: date | None,
+    to_date: date | None,
+    q: str | None,
+) -> tuple[str, list[str | int]]:
+    if from_date and to_date and from_date > to_date:
+        raise HTTPException(status_code=422, detail="Startdatum muss vor dem Enddatum liegen")
+
+    conditions: list[str] = []
+    parameters: list[str | int] = []
+    if entry_type:
+        conditions.append("s.entry_type = ?")
+        parameters.append(entry_type)
+    if event_id is not None:
+        conditions.append("s.event_id = ?")
+        parameters.append(event_id)
+    if from_date:
+        conditions.append("date(s.created_at) >= ?")
+        parameters.append(from_date.isoformat())
+    if to_date:
+        conditions.append("date(s.created_at) <= ?")
+        parameters.append(to_date.isoformat())
+    if q and q.strip():
+        conditions.append("(s.content LIKE ? OR s.author LIKE ? OR e.title LIKE ?)")
+        search = f"%{q.strip()}%"
+        parameters.extend((search, search, search))
+
+    where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where_clause, parameters
+
+
+@app.get("/api/situation-log")
+def list_situation_log(
+    entry_type: Literal["observation", "decision", "measure", "resource", "handover"] | None = None,
+    event_id: int | None = Query(default=None, ge=1),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    q: str | None = Query(default=None, max_length=120),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
+    limit: int = Query(default=50, ge=1, le=200),
+    _: str = Depends(require_admin),
+):
+    where_clause, parameters = situation_log_filters(entry_type, event_id, from_date, to_date, q)
+    with closing(get_connection()) as connection:
+        total = connection.execute(
+            f"SELECT COUNT(*) FROM situation_log s LEFT JOIN events e ON e.id = s.event_id{where_clause}",
+            parameters,
+        ).fetchone()[0]
+        rows = connection.execute(
+            f"""SELECT s.*, e.title AS event_title
+                FROM situation_log s
+                LEFT JOIN events e ON e.id = s.event_id
+                {where_clause}
+                ORDER BY s.id DESC
+                LIMIT ? OFFSET ?""",
+            [*parameters, limit, offset],
+        ).fetchall()
+    return {"entries": [dict(row) for row in rows], "total": total, "offset": offset, "limit": limit}
+
+
+@app.get("/api/situation-log/report")
+def generate_situation_log_report(
+    entry_type: Literal["observation", "decision", "measure", "resource", "handover"] | None = None,
+    event_id: int | None = Query(default=None, ge=1),
+    from_date: date | None = None,
+    to_date: date | None = None,
+    q: str | None = Query(default=None, max_length=120),
+    _: str = Depends(require_admin),
+):
+    where_clause, parameters = situation_log_filters(entry_type, event_id, from_date, to_date, q)
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            f"""SELECT s.*, e.title AS event_title
+                FROM situation_log s
+                LEFT JOIN events e ON e.id = s.event_id
+                {where_clause}
+                ORDER BY s.id ASC""",
+            parameters,
+        ).fetchall()
+    entries = [dict(row) for row in rows]
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "total": len(entries),
+        "entries": entries,
+    }
+
+
+@app.post("/api/situation-log", status_code=201)
+def create_situation_log_entry(entry: SituationLogCreate, _: str = Depends(require_admin)):
+    content = entry.content.strip()
+    author = entry.author.strip()
+    if not content or not author:
+        raise HTTPException(status_code=422, detail="Eintrag und Kürzel dürfen nicht leer sein")
+
+    with closing(get_connection()) as connection:
+        if entry.event_id is not None:
+            event = connection.execute(
+                "SELECT 1 FROM events WHERE id = ?", (entry.event_id,)
+            ).fetchone()
+            if event is None:
+                raise HTTPException(status_code=404, detail="Verknüpftes Ereignis nicht gefunden")
+        cursor = connection.execute(
+            "INSERT INTO situation_log (entry_type, content, author, event_id) VALUES (?, ?, ?, ?)",
+            (entry.entry_type, content, author, entry.event_id),
+        )
+        connection.commit()
+        row = connection.execute(
+            """SELECT s.*, e.title AS event_title
+               FROM situation_log s
+               LEFT JOIN events e ON e.id = s.event_id
+               WHERE s.id = ?""",
+            (cursor.lastrowid,),
+        ).fetchone()
+    return dict(row)
+
+
 @app.get("/api/locations/search")
 def search_hamburg_locations(
     q: str = Query(min_length=4, max_length=120),
     _: str = Depends(require_admin),
 ):
     query = q.strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="Suchbegriff darf nicht leer sein")
     cache_key = query.casefold()
     now = time.monotonic()
     cached = geocode_cache.get(cache_key)
