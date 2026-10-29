@@ -1,14 +1,34 @@
+import hashlib
+import json
+import os
+import secrets
 import sqlite3
+import ssl
+import time
 from contextlib import closing
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Literal
+from urllib.error import URLError
+from urllib.parse import urlencode
+from urllib.request import Request as URLRequest, urlopen
 
-from fastapi import FastAPI, HTTPException
+import certifi
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 app = FastAPI()
 DATABASE_PATH = Path(__file__).with_name("riskpilot.db")
+ADMIN_USERNAME = os.getenv("RISKPILOT_ADMIN_USER", "admin")
+ADMIN_PASSWORD = os.getenv("RISKPILOT_ADMIN_PASSWORD", "admin")
+SESSION_TTL_SECONDS = 8 * 60 * 60
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_LOCK_SECONDS = 15 * 60
+MAX_LOGIN_ATTEMPTS = 5
+HAMBURG_BOUNDS = (53.39, 53.75, 9.73, 10.33)
+active_sessions: dict[str, float] = {}
+geocode_cache: dict[str, tuple[float, list[dict[str, str | float]]]] = {}
 
 
 def get_connection():
@@ -32,6 +52,19 @@ def initialize_database():
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"""
         )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(events)")}
+        if "latitude" not in columns:
+            connection.execute("ALTER TABLE events ADD COLUMN latitude REAL")
+        if "longitude" not in columns:
+            connection.execute("ALTER TABLE events ADD COLUMN longitude REAL")
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS login_attempts (
+                client_key TEXT PRIMARY KEY,
+                attempts INTEGER NOT NULL,
+                window_started_at REAL NOT NULL,
+                locked_until REAL NOT NULL DEFAULT 0
+            )"""
+        )
         connection.commit()
 
 
@@ -40,16 +73,31 @@ initialize_database()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 class EventCreate(BaseModel):
     title: str = Field(min_length=3, max_length=120)
     category: Literal["Brand", "Verkehr", "Infrastruktur", "Wetter", "Sonstiges"]
     severity: Literal["critical", "warning", "info"]
-    location: str = Field(min_length=3, max_length=180)
+    location: str = Field(min_length=5, max_length=240)
+    latitude: float = Field(ge=HAMBURG_BOUNDS[0], le=HAMBURG_BOUNDS[1])
+    longitude: float = Field(ge=HAMBURG_BOUNDS[2], le=HAMBURG_BOUNDS[3])
     description: str = Field(min_length=5, max_length=1200)
     owner: str = Field(min_length=2, max_length=80)
 
