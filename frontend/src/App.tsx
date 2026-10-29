@@ -26,24 +26,78 @@ const markerIcons = Object.fromEntries(
   })]),
 ) as Record<Severity, L.DivIcon>
 
+function MapInstanceBridge({ onReady }: { onReady: (map: L.Map) => void }) {
+  const map = useMap()
+
+  useEffect(() => onReady(map), [map, onReady])
+  return null
+}
+
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
 
-async function loadEvents(): Promise<RiskEvent[]> {
-  const response = await fetch(`${API_URL}/api/events`)
-  if (!response.ok) throw new Error('Ereignisse konnten nicht geladen werden')
+class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
+async function loadEvents(token: string): Promise<RiskEvent[]> {
+  const response = await fetch(`${API_URL}/api/events`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok) throw new ApiError('Ereignisse konnten nicht geladen werden', response.status)
   return response.json()
 }
 
-async function saveEvent(event: EventDraft): Promise<RiskEvent> {
-  const response = await fetch(`${API_URL}/api/events`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) })
-  if (!response.ok) throw new Error('Ereignis konnte nicht angelegt werden')
+async function saveEvent(token: string, event: EventDraft): Promise<RiskEvent> {
+  const response = await fetch(`${API_URL}/api/events`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(event) })
+  if (!response.ok) throw new ApiError('Ereignis konnte nicht angelegt werden', response.status)
   return response.json()
 }
 
-async function setEventStatus(id: number, status: EventStatus): Promise<RiskEvent> {
-  const response = await fetch(`${API_URL}/api/events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
-  if (!response.ok) throw new Error('Status konnte nicht aktualisiert werden')
+async function setEventStatus(token: string, id: number, status: EventStatus): Promise<RiskEvent> {
+  const response = await fetch(`${API_URL}/api/events/${id}`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+  if (!response.ok) throw new ApiError('Status konnte nicht aktualisiert werden', response.status)
   return response.json()
+}
+
+async function removeEvent(token: string, id: number): Promise<void> {
+  const response = await fetch(`${API_URL}/api/events/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) throw new ApiError('Ereignis konnte nicht gelöscht werden', response.status)
+}
+
+async function searchAddresses(token: string, query: string, signal: AbortSignal): Promise<AddressSuggestion[]> {
+  const parameters = new URLSearchParams({ q: query })
+  const response = await fetch(`${API_URL}/api/locations/search?${parameters}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal,
+  })
+  if (!response.ok) throw new ApiError('Adressvorschläge konnten nicht geladen werden', response.status)
+  const payload: { suggestions: AddressSuggestion[] } = await response.json()
+  return payload.suggestions
+}
+
+async function loginAdmin(username: string, password: string): Promise<string> {
+  let response: Response
+  try {
+    response = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+  } catch {
+    throw new Error('Backend nicht erreichbar. Bitte starte zuerst das Backend.')
+  }
+  if (response.status === 401) throw new Error('Benutzername oder Passwort falsch.')
+  if (response.status === 429) throw new Error('Zu viele Fehlversuche. Die Anmeldung ist vorübergehend gesperrt; bitte später erneut versuchen.')
+  if (response.status === 403) throw new Error('Der Demo-Login ist nur auf diesem Computer verfügbar.')
+  if (!response.ok) throw new Error('Anmeldung fehlgeschlagen. Bitte Backend-Verbindung prüfen.')
+  const payload: { access_token: string } = await response.json()
+  return payload.access_token
 }
 
 async function requestBackend(): Promise<string> {
@@ -132,18 +186,57 @@ function App() {
   const criticalCount = events.filter((event) => event.severity === 'critical' && event.status !== 'resolved').length
   const monitoringCount = events.filter((event) => event.status === 'monitoring').length
   const resolvedCount = events.filter((event) => event.status === 'resolved').length
+  const mappedEventCount = events.filter((event) => typeof event.latitude === 'number' && typeof event.longitude === 'number').length
+  const unmappedEventCount = events.length - mappedEventCount
+
+  if (!token) {
+    return (
+      <main className="login-page">
+        <section className="login-story" aria-label="RiskPilot Hamburg">
+          <a className="login-brand" href="#login" aria-label="RiskPilot">
+            <span className="login-brand-mark"><Shield size={22} /><span>R</span></span>
+            <span>RISKPILOT <small>HAMBURG</small></span>
+          </a>
+          <div className="login-story-copy">
+            <span className="login-kicker"><span className="login-live-dot" /> LAGEZENTRUM · HAMBURG</span>
+            <h1>Ein klarer Blick.<br />Wenn es darauf<br /><em>ankommt.</em></h1>
+            <p>Ereignisse ordnen. Prioritäten erkennen. Maßnahmen im Blick behalten.</p>
+          </div>
+          <div className="login-story-footer"><span>53° 33′ N&nbsp;&nbsp; 9° 59′ E</span><span>LEITSTELLE HAMBURG</span></div>
+        </section>
+        <section className="login-side" id="login">
+          <div className="login-panel">
+            <span className="login-panel-index">ADMINISTRATIONSZUGANG <span>01 — 01</span></span>
+            <div className="login-panel-icon"><LockKeyhole size={21} /></div>
+            <h2>Willkommen zurück.</h2>
+            <p className="login-intro">Melde dich an, um die Hamburger Ereignislage zu verwalten.</p>
+            <form className="login-form" onSubmit={(submitEvent) => void handleLogin(submitEvent)}>
+              <label>Benutzername<input autoComplete="username" required value={loginName} onChange={(change) => setLoginName(change.target.value)} placeholder="Benutzername" /></label>
+              <label>Passwort<input autoComplete="current-password" required type="password" value={loginPassword} onChange={(change) => setLoginPassword(change.target.value)} placeholder="Passwort" /></label>
+              {loginError && <p className="form-error" role="alert">{loginError}</p>}
+              <button className="login-submit" type="submit" disabled={isLoggingIn}>
+                {isLoggingIn ? 'Anmeldung läuft …' : 'Sicher anmelden'} <span>→</span>
+              </button>
+            </form>
+            <div className="login-demo-note"><span className="login-demo-dot" /><span><strong>Lokaler Demo-Modus</strong><br />Standardzugang: admin / admin</span></div>
+            <p className="login-security-note">Demo-Zugang ist nur lokal verfügbar. Nach fünf Fehlversuchen wird die Anmeldung für 15 Minuten gesperrt.</p>
+          </div>
+          <div className="login-side-footer"><span>RISKPILOT · EINSATZÜBERSICHT</span><span>VERSION 0.1</span></div>
+        </section>
+      </main>
+    )
+  }
 
   return (
     <div className="app-shell">
       <aside className="rail" aria-label="Hauptnavigation">
         <a className="brand-mark" href="#overview" aria-label="RiskPilot Startseite"><Shield size={22} strokeWidth={2.2} /><span>R</span></a>
         <div className="rail-divider" />
-        <button className="rail-button rail-button--active" title="Lageübersicht" aria-label="Lageübersicht"><Layers3 size={19} /></button>
-        <button className="rail-button" title="Einsatzmeldungen" aria-label="Einsatzmeldungen"><Siren size={19} /></button>
-        <button className="rail-button" title="Lagekarte" aria-label="Lagekarte"><MapPin size={19} /></button>
+        <a className="rail-button rail-button--active" href="#overview" title="Lageübersicht" aria-label="Lageübersicht" aria-current="page"><Layers3 size={19} /></a>
+        <a className="rail-button" href="#incidents" title="Einsatzmeldungen" aria-label="Einsatzmeldungen"><Siren size={19} /></a>
+        <a className="rail-button" href="#map" title="Lagekarte" aria-label="Lagekarte"><MapPin size={19} /></a>
         <div className="rail-spacer" />
-        <button className="rail-button" title="Benachrichtigungen" aria-label="Benachrichtigungen"><Bell size={19} /></button>
-        <div className="avatar" title="Leitstelle Berlin">LB</div>
+        <button className="avatar logout-avatar" title="Abmelden" aria-label="Abmelden" onClick={() => void handleLogout()}><LogOut size={15} /></button>
       </aside>
 
       <main className="workspace" id="overview">
@@ -151,8 +244,7 @@ function App() {
           <div className="breadcrumb"><span>RISKPILOT</span><span className="breadcrumb-slash">/</span><strong>Einsatzübersicht</strong></div>
           <div className="topbar-right">
             <div className={`connection-pill connection-pill--${apiState}`}><span className="connection-dot" />{apiState === 'online' ? 'API verbunden' : apiState === 'offline' ? 'API offline' : 'Prüfe API'}</div>
-            <button className="icon-button notification-button" aria-label="Benachrichtigungen"><Bell size={17} /><span /></button>
-            <button className="profile-button"><span className="profile-avatar">MK</span><span className="profile-name">M. Keller</span><ChevronDown size={14} /></button>
+            <button className="profile-chip" onClick={() => void handleLogout()} aria-label="M. Keller abmelden"><span className="profile-avatar">AD</span><span className="profile-name">Admin</span><LogOut size={14} /></button>
           </div>
         </header>
 
