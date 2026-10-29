@@ -437,6 +437,18 @@ def search_hamburg_locations(
 
     features = payload.get("features", []) if isinstance(payload, dict) else []
     suggestions: list[dict[str, str | float]] = []
+    query_without_postcode = re.sub(r"\b\d{5}\b", "", query)
+    query_without_city = re.sub(
+        r"\b(?:hamburg|deutschland|germany)\b", "", query_without_postcode, flags=re.IGNORECASE
+    ).strip(" ,")
+    requested_house_number_match = re.search(
+        r"(?<!\w)(\d+[a-zA-Z]?(?:[-/]\d+[a-zA-Z]?)?)\s*$", query_without_city
+    )
+    requested_house_number = (
+        requested_house_number_match.group(1).casefold()
+        if requested_house_number_match
+        else None
+    )
     for feature in features:
         if not isinstance(feature, dict):
             continue
@@ -453,6 +465,11 @@ def search_hamburg_locations(
 
         street = properties.get("street")
         house_number = properties.get("housenumber")
+        if requested_house_number and (
+            not isinstance(house_number, str)
+            or house_number.casefold() != requested_house_number
+        ):
+            continue
         address = " ".join(part for part in (street, house_number) if isinstance(part, str))
         if not address:
             address = properties.get("name")
