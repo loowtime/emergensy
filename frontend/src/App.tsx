@@ -1,21 +1,27 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Activity, AlertTriangle, Bell, Check, ChevronDown, Clock3, CloudRain, Crosshair, Flame, Layers3, LocateFixed, MapPin, Menu, Plus, RefreshCw, Search, Shield, Siren, Wifi, X } from 'lucide-react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { Activity, AlertTriangle, Check, Clock3, CloudRain, Crosshair, Flame, Layers3, LocateFixed, LockKeyhole, LogOut, MapPin, Plus, RefreshCw, Search, Shield, Siren, Trash2, Wifi, X } from 'lucide-react'
 import L from 'leaflet'
-import { MapContainer, Marker, Popup, TileLayer, ZoomControl } from 'react-leaflet'
+import { MapContainer, Marker, Popup, TileLayer, useMap, ZoomControl } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
 
 type Severity = 'critical' | 'warning' | 'info'
-type Incident = { id: string; title: string; location: string; time: string; severity: Severity; coordinates: [number, number]; icon: typeof Flame }
 type EventStatus = 'open' | 'monitoring' | 'resolved'
-type RiskEvent = { id: number; title: string; category: string; severity: Severity; location: string; description: string; owner: string; status: EventStatus; created_at: string }
+type RiskEvent = { id: number; title: string; category: string; severity: Severity; location: string; latitude: number | null; longitude: number | null; description: string; owner: string; status: EventStatus; created_at: string }
 type EventDraft = Omit<RiskEvent, 'id' | 'status' | 'created_at'>
+type OperationLocation = { address: string; label: string; coordinates: [number, number] }
+type AddressSuggestion = { label: string; latitude: number; longitude: number }
 
-const incidents: Incident[] = [
-  { id: 'INC-2481', title: 'Gebäudebrand', location: 'Alexanderplatz 5, Mitte', time: 'vor 4 Min.', severity: 'critical', coordinates: [52.5219, 13.4132], icon: Flame },
-  { id: 'INC-2479', title: 'Verkehrsunfall', location: 'Friedrichstraße / Unter den Linden', time: 'vor 12 Min.', severity: 'warning', coordinates: [52.5174, 13.3891], icon: AlertTriangle },
-  { id: 'INC-2476', title: 'Wasserrohrbruch', location: 'Oranienburger Straße 18', time: 'vor 26 Min.', severity: 'info', coordinates: [52.5251, 13.3942], icon: CloudRain },
+const operationLocations: OperationLocation[] = [
+  { address: 'Rathausmarkt 1, 20095 Hamburg', label: 'Rathausmarkt · Altstadt', coordinates: [53.5503, 9.9926] },
+  { address: 'Glockengießerwall 5-7, 20095 Hamburg', label: 'Hauptbahnhof · St. Georg', coordinates: [53.5529, 10.0067] },
+  { address: 'Platz der Deutschen Einheit 1, 20457 Hamburg', label: 'Elbphilharmonie · HafenCity', coordinates: [53.5413, 9.9843] },
+  { address: 'Bei den St. Pauli-Landungsbrücken 5, 20359 Hamburg', label: 'Landungsbrücken · St. Pauli', coordinates: [53.5451, 9.9661] },
+  { address: 'Paul-Nevermann-Platz 15, 22765 Hamburg', label: 'Bahnhof Altona · Altona', coordinates: [53.5528, 9.9356] },
 ]
+
+const hamburgCenter: [number, number] = [53.5511, 9.9937]
+const defaultLocation = operationLocations[0]
 
 const markerIcons = Object.fromEntries(
   (['critical', 'warning', 'info'] as const).map((severity) => [severity, L.divIcon({
@@ -108,72 +114,222 @@ async function requestBackend(): Promise<string> {
 }
 
 function App() {
-  const [apiState, setApiState] = useState<'checking' | 'online' | 'offline'>('checking')
-  const [apiMessage, setApiMessage] = useState('Verbindung wird geprüft')
+  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem('riskpilot-token'))
+  const [loginName, setLoginName] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const [apiState, setApiState] = useState<'checking' | 'online' | 'offline'>(token ? 'checking' : 'offline')
+  const [apiMessage, setApiMessage] = useState(token ? 'Verbindung wird geprüft' : 'Bitte anmelden')
   const [lastChecked, setLastChecked] = useState<Date | null>(null)
   const [filter, setFilter] = useState<'all' | Severity>('all')
   const [search, setSearch] = useState('')
   const [events, setEvents] = useState<RiskEvent[]>([])
+  const [addressQuery, setAddressQuery] = useState(defaultLocation.address)
+  const [selectedAddress, setSelectedAddress] = useState(defaultLocation.address)
+  const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([])
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false)
+  const [addressSearchError, setAddressSearchError] = useState('')
+  const [deletingEventId, setDeletingEventId] = useState<number | null>(null)
+  const [mapInstance, setMapInstance] = useState<L.Map | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [notice, setNotice] = useState('')
-  const [draft, setDraft] = useState<EventDraft>({ title: '', category: 'Infrastruktur', severity: 'warning', location: '', description: '', owner: 'M. Keller' })
+  const [draft, setDraft] = useState<EventDraft>({ title: '', category: 'Infrastruktur', severity: 'warning', location: defaultLocation.address, latitude: defaultLocation.coordinates[0], longitude: defaultLocation.coordinates[1], description: '', owner: 'M. Keller' })
+  const handleMapReady = useCallback((map: L.Map) => setMapInstance(map), [])
 
   useEffect(() => {
+    if (!token) return
+
     let active = true
-    requestBackend().then((message) => {
+    Promise.all([requestBackend(), loadEvents(token)]).then(([message, items]) => {
       if (!active) return
       setApiMessage(message)
       setApiState('online')
       setLastChecked(new Date())
-    }).catch(() => {
+      setEvents(items)
+    }).catch((error: unknown) => {
       if (!active) return
+      if (error instanceof ApiError && error.status === 401) {
+        sessionStorage.removeItem('riskpilot-token')
+        setToken(null)
+        setEvents([])
+        setApiState('offline')
+        setApiMessage('Bitte anmelden')
+        setLoginError('Deine Sitzung ist abgelaufen. Bitte erneut anmelden.')
+        return
+      }
       setApiMessage('Backend nicht erreichbar')
       setApiState('offline')
+      setNotice(error instanceof Error ? error.message : 'Ereignisliste konnte nicht geladen werden.')
     })
-    loadEvents().then((items) => { if (active) setEvents(items) }).catch(() => { if (active) setNotice('Ereignisliste konnte nicht geladen werden.') })
     return () => { active = false }
-  }, [])
+  }, [token])
+
+  useEffect(() => {
+    const query = addressQuery.trim()
+    if (!token || query.length < 4 || query === selectedAddress) return
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => {
+      setIsSearchingAddress(true)
+      setAddressSearchError('')
+      void searchAddresses(token, query, controller.signal).then((suggestions) => {
+        setAddressSuggestions(suggestions)
+        if (suggestions.length === 0) setAddressSearchError('Keine passenden Adressen in Hamburg gefunden.')
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        if (error instanceof ApiError && error.status === 401) {
+          sessionStorage.removeItem('riskpilot-token')
+          setToken(null)
+          setEvents([])
+          setApiState('offline')
+          setApiMessage('Bitte anmelden')
+          setLoginError('Deine Sitzung ist abgelaufen. Bitte erneut anmelden.')
+        } else {
+          setAddressSearchError(error instanceof Error ? error.message : 'Adresssuche fehlgeschlagen.')
+        }
+      }).finally(() => {
+        if (!controller.signal.aborted) setIsSearchingAddress(false)
+      })
+    }, 700)
+
+    return () => {
+      window.clearTimeout(timeout)
+      controller.abort()
+    }
+  }, [addressQuery, selectedAddress, token])
 
   async function refreshBackend() {
+    if (!token) return
     setApiState('checking')
     try {
-      const [message, latestEvents] = await Promise.all([requestBackend(), loadEvents()])
+      const [message, latestEvents] = await Promise.all([requestBackend(), loadEvents(token)])
       setEvents(latestEvents)
       setApiMessage(message)
       setApiState('online')
       setLastChecked(new Date())
-    } catch {
-      setApiMessage('Backend nicht erreichbar')
-      setApiState('offline')
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        sessionStorage.removeItem('riskpilot-token')
+        setToken(null)
+        setEvents([])
+        setApiState('offline')
+        setApiMessage('Bitte anmelden')
+        setLoginError('Deine Sitzung ist abgelaufen. Bitte erneut anmelden.')
+      } else {
+        setApiMessage('Backend nicht erreichbar')
+        setApiState('offline')
+        setNotice(error instanceof Error ? error.message : 'Aktualisieren fehlgeschlagen.')
+      }
     }
+  }
+
+  async function handleLogin(submitEvent: FormEvent<HTMLFormElement>) {
+    submitEvent.preventDefault()
+    setIsLoggingIn(true)
+    setLoginError('')
+    try {
+      const accessToken = await loginAdmin(loginName, loginPassword)
+      sessionStorage.setItem('riskpilot-token', accessToken)
+      setToken(accessToken)
+      setLoginPassword('')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Anmeldung fehlgeschlagen.')
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
+
+  async function handleLogout() {
+    let logoutWarning = ''
+    if (token) {
+      try {
+        await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      } catch {
+        logoutWarning = 'Server nicht erreichbar; die Sitzung läuft automatisch ab.'
+      }
+    }
+    sessionStorage.removeItem('riskpilot-token')
+    setToken(null)
+    setEvents([])
+    setApiState('offline')
+    setApiMessage('Bitte anmelden')
+    setLoginError(logoutWarning)
+    setLoginPassword('')
   }
 
   async function handleCreateEvent(submitEvent: FormEvent<HTMLFormElement>) {
     submitEvent.preventDefault()
+    if (!token) return
     setIsSaving(true)
     setFormError('')
     try {
-      const created = await saveEvent(draft)
+      const created = await saveEvent(token, draft)
       setEvents((current) => [created, ...current])
-      setDraft({ title: '', category: 'Infrastruktur', severity: 'warning', location: '', description: '', owner: 'M. Keller' })
+      setDraft({ title: '', category: 'Infrastruktur', severity: 'warning', location: defaultLocation.address, latitude: defaultLocation.coordinates[0], longitude: defaultLocation.coordinates[1], description: '', owner: 'M. Keller' })
+      setAddressQuery(defaultLocation.address)
+      setSelectedAddress(defaultLocation.address)
+      setAddressSuggestions([])
       setIsCreateOpen(false)
       setNotice(`Ereignis ${created.id} wurde angelegt.`)
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Unbekannter Fehler beim Speichern.')
+      if (error instanceof ApiError && error.status === 401) {
+        sessionStorage.removeItem('riskpilot-token')
+        setToken(null)
+        setEvents([])
+        setApiState('offline')
+        setApiMessage('Bitte anmelden')
+        setLoginError('Deine Sitzung ist abgelaufen. Bitte erneut anmelden.')
+      } else {
+        setFormError(error instanceof Error ? error.message : 'Unbekannter Fehler beim Speichern.')
+      }
     } finally {
       setIsSaving(false)
     }
   }
 
   async function handleStatusChange(event: RiskEvent, status: EventStatus) {
+    if (!token) return
     try {
-      const updated = await setEventStatus(event.id, status)
+      const updated = await setEventStatus(token, event.id, status)
       setEvents((current) => current.map((item) => item.id === updated.id ? updated : item))
       setNotice(`Status für „${updated.title}“ aktualisiert.`)
-    } catch {
-      setNotice('Status konnte nicht gespeichert werden. Bitte erneut versuchen.')
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        sessionStorage.removeItem('riskpilot-token')
+        setToken(null)
+        setEvents([])
+        setApiState('offline')
+        setApiMessage('Bitte anmelden')
+        setLoginError('Deine Sitzung ist abgelaufen. Bitte erneut anmelden.')
+      } else {
+        setNotice(error instanceof Error ? error.message : 'Status konnte nicht gespeichert werden.')
+      }
+    }
+  }
+
+  async function handleDeleteEvent(event: RiskEvent) {
+    if (!token || !window.confirm(`Ereignis „${event.title}“ (#${event.id}) unwiderruflich löschen?`)) return
+    setDeletingEventId(event.id)
+    try {
+      await removeEvent(token, event.id)
+      setEvents((current) => current.filter((item) => item.id !== event.id))
+      setNotice(`Ereignis „${event.title}“ wurde gelöscht.`)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        sessionStorage.removeItem('riskpilot-token')
+        setToken(null)
+        setEvents([])
+        setApiState('offline')
+        setApiMessage('Bitte anmelden')
+        setLoginError('Deine Sitzung ist abgelaufen. Bitte erneut anmelden.')
+      } else {
+        setNotice(error instanceof Error ? error.message : 'Ereignis konnte nicht gelöscht werden.')
+      }
+    } finally {
+      setDeletingEventId(null)
     }
   }
 
@@ -269,24 +425,29 @@ function App() {
         </section>
 
         <section className="content-grid">
-          <article className="map-panel">
+          <article className="map-panel" id="map">
             <div className="panel-heading map-heading">
-              <div><h2>Räumlicher Kontext</h2><p><span className="map-live-dot" /> Beispielmarker <span className="panel-separator">·</span> Berlin-Mitte</p></div>
-              <div className="map-tools"><button className="map-tool" title="Karte zentrieren" aria-label="Karte zentrieren"><LocateFixed size={16} /></button><button className="map-tool" title="Kartenebenen" aria-label="Kartenebenen"><Layers3 size={16} /></button><button className="map-tool map-menu" title="Weitere Kartenoptionen" aria-label="Weitere Kartenoptionen"><Menu size={16} /></button></div>
+              <div><h2>Lagekarte Hamburg</h2><p><span className="map-live-dot" /> {mappedEventCount} Ereignisse auf Karte <span className="panel-separator">·</span> Einsatzgebiet Hamburg</p></div>
+              <div className="map-tools"><button className="map-tool" title="Karte zentrieren" aria-label="Karte zentrieren" disabled={!mapInstance} onClick={() => mapInstance?.setView(hamburgCenter, 12)}><LocateFixed size={16} /></button></div>
             </div>
             <div className="map-wrap">
-              <MapContainer center={[52.5212, 13.405]} zoom={14} zoomControl={false} scrollWheelZoom className="incident-map">
+              <MapContainer center={hamburgCenter} zoom={12} zoomControl={false} scrollWheelZoom className="incident-map">
+                <MapInstanceBridge onReady={handleMapReady} />
                 <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <ZoomControl position="bottomright" />
-                {incidents.map((incident) => <Marker key={incident.id} position={incident.coordinates} icon={markerIcons[incident.severity]}><Popup><strong>{incident.title}</strong><br />{incident.location}<br /><small>{incident.id} · {incident.time}</small></Popup></Marker>)}
+                {events.flatMap((event) => {
+                  if (typeof event.latitude !== 'number' || typeof event.longitude !== 'number') return []
+                  const coordinates: [number, number] = [event.latitude, event.longitude]
+                  return [<Marker key={event.id} position={coordinates} icon={markerIcons[event.severity]}><Popup><strong>{event.title}</strong><br />{event.location}<br /><small>#{event.id} · {event.owner}</small></Popup></Marker>]
+                })}
               </MapContainer>
-              <div className="map-legend"><span><i className="legend-dot legend-dot--critical" /> Kritisch <b>1</b></span><span><i className="legend-dot legend-dot--warning" /> Warnung <b>1</b></span><span><i className="legend-dot legend-dot--info" /> Information <b>1</b></span></div>
+              <div className="map-legend"><span><i className="legend-dot legend-dot--critical" /> Kritisch <b>{events.filter((event) => event.severity === 'critical').length}</b></span><span><i className="legend-dot legend-dot--warning" /> Warnung <b>{events.filter((event) => event.severity === 'warning').length}</b></span><span><i className="legend-dot legend-dot--info" /> Information <b>{events.filter((event) => event.severity === 'info').length}</b></span></div>
               <div className="map-scale">© OpenStreetMap-Mitwirkende</div>
             </div>
-            <div className="map-footer"><span><Crosshair size={14} /> Beispielkoordinaten · Berlin-Mitte</span><span>Marker dienen nur der Vorschau</span></div>
+            <div className="map-footer"><span><Crosshair size={14} /> Einsatzgebiet Hamburg · freie Adresssuche</span><span>{unmappedEventCount ? `${unmappedEventCount} ältere Ereignisse ohne Kartenkoordinaten` : <><a href="https://photon.komoot.io/" target="_blank" rel="noreferrer">Photon</a> · OpenStreetMap</>}</span></div>
           </article>
 
-          <aside className="incident-panel">
+          <aside className="incident-panel" id="incidents">
             <div className="panel-heading incident-heading"><div><h2>Ereignisse</h2><p><span className="incident-total">{openCount}</span> offen · {events.length} gesamt</p></div></div>
             <div className="filter-tabs" role="group" aria-label="Ereignisse nach Priorität filtern">
               <button className={filter === 'all' ? 'filter-tab filter-tab--active' : 'filter-tab'} onClick={() => setFilter('all')}>Alle <span>{events.length}</span></button>
@@ -322,11 +483,48 @@ function App() {
             <form className="event-form" onSubmit={(submitEvent) => void handleCreateEvent(submitEvent)}>
               <label>Titel<input autoFocus required minLength={3} maxLength={120} value={draft.title} onChange={(change) => setDraft({ ...draft, title: change.target.value })} placeholder="Kurz und eindeutig" /></label>
               <div className="form-row"><label>Kategorie<select value={draft.category} onChange={(change) => setDraft({ ...draft, category: change.target.value as EventDraft['category'] })}><option>Brand</option><option>Verkehr</option><option>Infrastruktur</option><option>Wetter</option><option>Sonstiges</option></select></label><label>Priorität<select value={draft.severity} onChange={(change) => setDraft({ ...draft, severity: change.target.value as Severity })}><option value="critical">Kritisch</option><option value="warning">Erhöht</option><option value="info">Niedrig</option></select></label></div>
-              <label>Ort<input required minLength={3} maxLength={180} value={draft.location} onChange={(change) => setDraft({ ...draft, location: change.target.value })} placeholder="Adresse, Standort oder Bereich" /></label>
+              <label>Einsatzadresse
+                <div className="address-autocomplete">
+                  <input
+                    autoComplete="off"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={addressSuggestions.length > 0}
+                    aria-controls="address-suggestions"
+                    required
+                    minLength={5}
+                    maxLength={240}
+                    value={addressQuery}
+                    onChange={(change) => {
+                      const value = change.target.value
+                      setAddressQuery(value)
+                      setSelectedAddress('')
+                      setAddressSuggestions([])
+                      setIsSearchingAddress(false)
+                      setAddressSearchError('')
+                      setDraft({ ...draft, location: value, latitude: null, longitude: null })
+                    }}
+                    placeholder="Adresse oder Ort in Hamburg eingeben"
+                  />
+                  {isSearchingAddress && <span className="address-search-spinner" aria-label="Adresssuche läuft" />}
+                  {addressSuggestions.length > 0 && <div className="address-suggestions" id="address-suggestions" role="listbox" aria-label="Hamburger Adressvorschläge">
+                    {addressSuggestions.map((suggestion) => <button key={`${suggestion.latitude}-${suggestion.longitude}-${suggestion.label}`} className="address-suggestion" type="button" role="option" aria-selected={selectedAddress === suggestion.label} onClick={() => {
+                      setAddressQuery(suggestion.label)
+                      setSelectedAddress(suggestion.label)
+                      setAddressSuggestions([])
+                      setAddressSearchError('')
+                      setDraft({ ...draft, location: suggestion.label, latitude: suggestion.latitude, longitude: suggestion.longitude })
+                    }}>
+                      <MapPin size={15} /><span>{suggestion.label}</span>
+                    </button>)}
+                  </div>}
+                </div>
+                <span className="address-attribution">{addressSearchError || (draft.latitude !== null && draft.longitude !== null ? 'Kartenstandort ausgewählt' : 'Mindestens 4 Zeichen eingeben und einen Treffer auswählen')} · Suchtext wird an Photon übermittelt</span>
+              </label>
               <label>Beschreibung<textarea required minLength={5} maxLength={1200} rows={4} value={draft.description} onChange={(change) => setDraft({ ...draft, description: change.target.value })} placeholder="Was ist passiert? Welche Auswirkungen sind bekannt?" /></label>
               <label>Verantwortlich<input required minLength={2} maxLength={80} value={draft.owner} onChange={(change) => setDraft({ ...draft, owner: change.target.value })} /></label>
               {formError && <p className="form-error" role="alert">{formError}</p>}
-              <div className="modal-actions"><button type="button" className="refresh-button" onClick={() => setIsCreateOpen(false)}>Abbrechen</button><button type="submit" className="create-event-button" disabled={isSaving}><Plus size={15} />{isSaving ? 'Wird gespeichert…' : 'Ereignis speichern'}</button></div>
+              <div className="modal-actions"><button type="button" className="refresh-button" onClick={() => setIsCreateOpen(false)}>Abbrechen</button><button type="submit" className="create-event-button" disabled={isSaving || draft.latitude === null || draft.longitude === null}><Plus size={15} />{isSaving ? 'Wird gespeichert…' : 'Ereignis speichern'}</button></div>
             </form>
           </section>
         </div>}
