@@ -1,0 +1,7 @@
+backend/.venv/
+__pycache__/
+*.py[cod]
+backend/riskpilot.db
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
