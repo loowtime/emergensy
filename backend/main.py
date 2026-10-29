@@ -106,12 +106,121 @@ class EventStatusUpdate(BaseModel):
     status: Literal["open", "monitoring", "resolved"]
 
 
+class AdminLogin(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=200)
+
+
 def serialize_event(row: sqlite3.Row):
     return dict(row)
 
 
+def request_client_key(request: Request) -> str:
+    host = request.client.host if request.client else "unknown"
+    return hashlib.sha256(host.encode("utf-8")).hexdigest()
+
+
+def require_local_client(request: Request):
+    host = request.client.host if request.client else ""
+    try:
+        is_loopback = ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = False
+    if not is_loopback:
+        raise HTTPException(status_code=403, detail="Demo-Login ist nur lokal verfügbar")
+
+
+def require_admin(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> str:
+    require_local_client(request)
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Anmeldung erforderlich")
+    expires_at = active_sessions.get(token)
+    if expires_at is None or expires_at <= time.monotonic():
+        active_sessions.pop(token, None)
+        raise HTTPException(status_code=401, detail="Sitzung abgelaufen")
+    return token
+
+
+@app.post("/api/auth/login")
+def login_admin(credentials: AdminLogin, request: Request):
+    require_local_client(request)
+    now = time.time()
+    client_key = request_client_key(request)
+    with closing(get_connection()) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        attempt = connection.execute(
+            "SELECT attempts, window_started_at, locked_until FROM login_attempts WHERE client_key = ?",
+            (client_key,),
+        ).fetchone()
+        connection.execute(
+            "DELETE FROM login_attempts WHERE window_started_at < ? AND locked_until <= ?",
+            (now - LOGIN_WINDOW_SECONDS, now),
+        )
+        if attempt and attempt["locked_until"] > now:
+            retry_after = int(attempt["locked_until"] - now) + 1
+            connection.rollback()
+            raise HTTPException(
+                status_code=429,
+                detail="Zu viele Anmeldeversuche. Bitte später erneut versuchen.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        username_matches = secrets.compare_digest(
+            credentials.username.encode("utf-8"), ADMIN_USERNAME.encode("utf-8")
+        )
+        password_matches = secrets.compare_digest(
+            credentials.password.encode("utf-8"), ADMIN_PASSWORD.encode("utf-8")
+        )
+        valid_credentials = username_matches & password_matches
+        if not valid_credentials:
+            if attempt and now - attempt["window_started_at"] < LOGIN_WINDOW_SECONDS:
+                attempts = attempt["attempts"] + 1
+                window_started_at = attempt["window_started_at"]
+            else:
+                attempts = 1
+                window_started_at = now
+            locked_until = now + LOGIN_LOCK_SECONDS if attempts >= MAX_LOGIN_ATTEMPTS else 0
+            connection.execute(
+                """INSERT INTO login_attempts (client_key, attempts, window_started_at, locked_until)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(client_key) DO UPDATE SET
+                       attempts = excluded.attempts,
+                       window_started_at = excluded.window_started_at,
+                       locked_until = excluded.locked_until""",
+                (client_key, attempts, window_started_at, locked_until),
+            )
+            connection.commit()
+            if locked_until:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Zu viele Anmeldeversuche. Anmeldung ist 15 Minuten gesperrt.",
+                    headers={"Retry-After": str(LOGIN_LOCK_SECONDS)},
+                )
+            raise HTTPException(status_code=401, detail="Benutzername oder Passwort falsch")
+        connection.execute("DELETE FROM login_attempts WHERE client_key = ?", (client_key,))
+        connection.commit()
+
+    now = time.monotonic()
+    expired_tokens = [token for token, expiry in active_sessions.items() if expiry <= now]
+    for token in expired_tokens:
+        del active_sessions[token]
+    access_token = secrets.token_urlsafe(32)
+    active_sessions[access_token] = now + SESSION_TTL_SECONDS
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.post("/api/auth/logout")
+def logout_admin(token: str = Depends(require_admin)):
+    active_sessions.pop(token, None)
+    return {"message": "Abgemeldet"}
+
+
 @app.get("/api/events")
-def list_events():
+def list_events(_: str = Depends(require_admin)):
     with closing(get_connection()) as connection:
         rows = connection.execute(
             "SELECT * FROM events ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC"
@@ -120,11 +229,11 @@ def list_events():
 
 
 @app.post("/api/events", status_code=201)
-def create_event(event: EventCreate):
+def create_event(event: EventCreate, _: str = Depends(require_admin)):
     with closing(get_connection()) as connection:
         cursor = connection.execute(
-            "INSERT INTO events (title, category, severity, location, description, owner) VALUES (?, ?, ?, ?, ?, ?)",
-            (event.title, event.category, event.severity, event.location, event.description, event.owner),
+            "INSERT INTO events (title, category, severity, location, latitude, longitude, description, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (event.title, event.category, event.severity, event.location, event.latitude, event.longitude, event.description, event.owner),
         )
         connection.commit()
         row = connection.execute("SELECT * FROM events WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -132,7 +241,7 @@ def create_event(event: EventCreate):
 
 
 @app.patch("/api/events/{event_id}")
-def update_event_status(event_id: int, update: EventStatusUpdate):
+def update_event_status(event_id: int, update: EventStatusUpdate, _: str = Depends(require_admin)):
     with closing(get_connection()) as connection:
         cursor = connection.execute("UPDATE events SET status = ? WHERE id = ?", (update.status, event_id))
         connection.commit()
