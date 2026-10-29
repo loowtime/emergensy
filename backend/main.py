@@ -250,6 +250,92 @@ def update_event_status(event_id: int, update: EventStatusUpdate, _: str = Depen
         row = connection.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
     return serialize_event(row)
 
+
+@app.delete("/api/events/{event_id}", status_code=204)
+def delete_event(event_id: int, _: str = Depends(require_admin)):
+    with closing(get_connection()) as connection:
+        cursor = connection.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        connection.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Ereignis nicht gefunden")
+    return Response(status_code=204)
+
+
+@app.get("/api/locations/search")
+def search_hamburg_locations(
+    q: str = Query(min_length=4, max_length=120),
+    _: str = Depends(require_admin),
+):
+    query = q.strip()
+    cache_key = query.casefold()
+    now = time.monotonic()
+    cached = geocode_cache.get(cache_key)
+    if cached and cached[0] > now:
+        return {"suggestions": cached[1], "attribution": "Photon · OpenStreetMap"}
+
+    south, north, west, east = HAMBURG_BOUNDS
+    parameters = urlencode(
+        {
+            "q": query,
+            "limit": 6,
+            "lang": "de",
+            "bbox": f"{west},{south},{east},{north}",
+        }
+    )
+    request = URLRequest(
+        f"https://photon.komoot.io/api/?{parameters}",
+        headers={"User-Agent": "RiskPilotHamburg/1.0 (local emergency response dashboard)"},
+    )
+    try:
+        with urlopen(
+            request,
+            timeout=5,
+            context=ssl.create_default_context(cafile=certifi.where()),
+        ) as response:
+            payload = json.loads(response.read(512_001))
+    except (TimeoutError, URLError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=502, detail="Adresssuche ist momentan nicht erreichbar") from error
+
+    features = payload.get("features", []) if isinstance(payload, dict) else []
+    suggestions: list[dict[str, str | float]] = []
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        geometry = feature.get("geometry", {})
+        properties = feature.get("properties", {})
+        coordinates = geometry.get("coordinates", []) if isinstance(geometry, dict) else []
+        if not isinstance(coordinates, list) or len(coordinates) < 2 or not isinstance(properties, dict):
+            continue
+        longitude, latitude = coordinates[:2]
+        if not isinstance(latitude, (int, float)) or not isinstance(longitude, (int, float)):
+            continue
+        if not (south <= latitude <= north and west <= longitude <= east):
+            continue
+
+        street = properties.get("street")
+        house_number = properties.get("housenumber")
+        address = " ".join(part for part in (street, house_number) if isinstance(part, str))
+        if not address:
+            address = properties.get("name")
+        if not isinstance(address, str) or not address.strip():
+            continue
+        postcode = properties.get("postcode")
+        postal_city = " ".join(
+            part for part in (postcode if isinstance(postcode, str) else "", "Hamburg") if part
+        )
+        label = f"{address.strip()}, {postal_city}, Deutschland"
+        suggestions.append(
+            {"label": label, "latitude": float(latitude), "longitude": float(longitude)}
+        )
+
+    geocode_cache[cache_key] = (now + 5 * 60, suggestions)
+    for expired_key in [key for key, (expiry, _) in geocode_cache.items() if expiry <= now]:
+        geocode_cache.pop(expired_key, None)
+    while len(geocode_cache) > 256:
+        geocode_cache.pop(next(iter(geocode_cache)))
+    return {"suggestions": suggestions, "attribution": "Photon · OpenStreetMap"}
+
+
 @app.get("/")
 def home():
     return {"message": "RiskPilot läuft!"}
