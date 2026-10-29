@@ -1,5 +1,5 @@
 # emergensy
-Emergensy ist ein Dashboard für Ereignisübersicht und Risikomanagement. Die aktuelle Version unterstützt das Anlegen, Suchen, Priorisieren und Verwalten von Ereignissen und zeigt ausgewählte Hamburger Einsatzadressen auf der Karte. Funktionen wie Live-Lagebilder, Ressourcenverwaltung, Evakuierungsplanung und Einsatzsimulation sind noch nicht implementiert.
+Emergensy ist ein lokales Dashboard für Ereignisübersicht und Risikomanagement. Es unterstützt das Anlegen, Suchen, Priorisieren und Verwalten von Ereignissen, zeigt Hamburger Einsatzadressen auf einer Karte und bietet ein ereignisbezogenes Stabsprotokoll. Live-Lagebilder, echte Ressourcenverfügbarkeit, Evakuierungsplanung und Einsatzsimulation sind nicht enthalten.
 
 ## Lokale Entwicklung
 
@@ -36,8 +36,12 @@ Das Dashboard ist danach unter `http://localhost:5173` erreichbar. Die FastAPI-D
 - Status zwischen Offen, In Beobachtung und Abgeschlossen ändern
 - Kennzahlen werden aus den gespeicherten Backend-Ereignissen berechnet
 - Ereignisse können gelöscht werden; die API prüft Anmeldung und Existenz des Eintrags.
-- Adressen können frei eingegeben und über Photon mit OpenStreetMap-Daten vervollständigt werden. Vorschläge sind auf Hamburg begrenzt; ausgewählte Koordinaten werden im vorhandenen SQLite-Datensatz gespeichert und auf der Karte dargestellt.
+- Adressen einschließlich Hausnummer können frei eingegeben und über Photon mit OpenStreetMap-Daten vervollständigt werden. Die Suche prüft Hausnummern gegen den Kartendatensatz, damit bei einer Nummer nicht versehentlich ein unpassender Treffer ausgewählt wird. Vorschläge sind auf Hamburg begrenzt; ausgewählte Koordinaten werden im vorhandenen SQLite-Datensatz gespeichert und auf der Karte dargestellt.
 - Adresssuchtexte werden vom Backend an Photon (`photon.komoot.io`) übermittelt. Es gibt eine kurze serverseitige Cache-Dauer; für den externen Dienst gelten dessen Verfügbarkeit und Nutzungsbedingungen. Kein Google-Maps-Schlüssel erforderlich.
+- Das Stabsprotokoll speichert Beobachtungen, Entscheidungen, Maßnahmen, Ressourcenhinweise und Übergaben mit Serverzeit, manuellem Kürzel und optionalem Ereignisbezug. Die Historie lässt sich nach Zeitraum, Typ, Ereignis und Text durchsuchen und seitenweise rückblickend anzeigen.
+- Ein gefiltertes Protokoll kann mit Titel und Teilnehmenden als druckfertiger Bericht geöffnet und über den Browser als PDF gespeichert werden. Erstellzeit und Einträge kommen aus dem Backend; Teilnehmende und Kürzel sind manuelle Angaben.
+- Protokolleinträge sind über die Anwendung nur ergänzbar. Das ist kein kryptografisch manipulationssicheres Audit-Log und ersetzt keine revisionssichere Dokumentation.
+- Die Lagekarte kann auf alle offenen, georeferenzierten Ereignisse zoomen. Kartenpositionen sind Orientierungshilfen und keine Einsatz- oder Navigationsfreigabe.
 - Bereits gespeicherte Ereignisse bleiben erhalten. Ältere Einträge ohne Koordinaten werden als Altbestand markiert und nicht auf der Hamburg-Karte eingezeichnet.
 
 ## Technischer Stand
@@ -48,6 +52,7 @@ Das Dashboard ist danach unter `http://localhost:5173` erreichbar. Die FastAPI-D
 - Ereignis-API: `GET` und `POST /api/events`, `PATCH /api/events/{id}` (Anmeldung erforderlich)
 - Ereignisse löschen: `DELETE /api/events/{id}` (Anmeldung erforderlich)
 - Hamburger Adressvorschläge: `GET /api/locations/search?q=...` (Anmeldung erforderlich)
+- Stabsprotokoll: `GET` und `POST /api/situation-log` sowie `GET /api/situation-log/report` (Anmeldung erforderlich; Filter nach Typ, Ereignis, Datum und Text; Einträge werden über die Anwendung nicht geändert oder gelöscht)
 - Die SQLite-Tabelle wird beim Start angelegt; ein separates Migrationssystem oder eine automatisierte Test-Suite ist derzeit nicht eingerichtet.
 - Bestehende Ereignisdaten bleiben erhalten. Bereits vorhandene Orte außerhalb der neuen Hamburger Auswahlliste werden nicht automatisch verändert.
 - Die Karte lädt OpenStreetMap-Kacheln über das Internet; Suchtexte zur Adressvervollständigung werden separat an Photon übermittelt.
