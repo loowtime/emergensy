@@ -464,9 +464,11 @@ function App() {
                   <div className="incident-copy">
                     <div className="incident-title-row"><strong>{event.title}</strong><time>#{event.id}</time></div>
                     <span className="incident-location"><MapPin size={12} />{event.location}</span>
+                    {(typeof event.latitude !== 'number' || typeof event.longitude !== 'number') && <span className="legacy-location">Altbestand · ohne Kartenkoordinaten</span>}
                     <span className="event-description">{event.description}</span>
                     <div className="event-meta"><span className={`severity-label severity-label--${event.severity}`}>{event.severity === 'critical' ? 'Kritisch' : event.severity === 'warning' ? 'Erhöht' : 'Niedrig'}</span><span>{event.owner}</span></div>
                     <label className="status-control">Status <select value={event.status} onChange={(change) => void handleStatusChange(event, change.target.value as EventStatus)}><option value="open">Offen</option><option value="monitoring">In Beobachtung</option><option value="resolved">Abgeschlossen</option></select></label>
+                    <button className="delete-event-button" type="button" disabled={deletingEventId === event.id} onClick={() => void handleDeleteEvent(event)} aria-label={`Ereignis ${event.id} löschen`}><Trash2 size={14} />{deletingEventId === event.id ? 'Wird gelöscht …' : 'Ereignis löschen'}</button>
                   </div>
                 </article>
               })}
