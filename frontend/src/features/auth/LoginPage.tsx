@@ -52,7 +52,12 @@ export function LoginPage({ error, onLogin }: Props) {
                 {isSubmitting ? 'Anmeldung läuft …' : 'Sicher anmelden'} <span>→</span>
               </button>
             </form>
-            <div className="login-demo-note alert alert-secondary"><span className="login-demo-dot" /><span><strong>Lokaler Demo-Zugang</strong><br />Benutzername: admin · Passwort: admin</span></div>
+            {import.meta.env.DEV && (
+              <div className="login-demo-note alert alert-secondary">
+                <span className="login-demo-dot" />
+                <span><strong>Lokaler Demo-Zugang</strong><br />Benutzername: admin · Passwort: admin</span>
+              </div>
+            )}
             <p className="login-security-note">Demonstrationsbetrieb, nicht für den produktiven Einsatz vorgesehen. Nach fünf Fehlversuchen wird die Anmeldung vorübergehend gesperrt.</p>
           </div>
         </div>

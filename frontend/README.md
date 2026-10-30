@@ -12,7 +12,9 @@ npm run build
 npm run lint
 ```
 
-Das Frontend verwendet standardmäßig `http://127.0.0.1:8000` als FastAPI-Adresse. Für eine andere Adresse kann `VITE_API_URL` gesetzt werden. Der lokale Demo-Login lautet `admin` / `admin`; eine Registrierung gibt es nicht. Nach fünf falschen Passwörtern innerhalb von 15 Minuten wird die IP für 15 Minuten gesperrt. Ereignisänderungen verwenden das vom Backend ausgestellte Admin-Token.
+Das Frontend verwendet standardmäßig `http://127.0.0.1:8000` als FastAPI-Adresse. Für eine andere Adresse kann `VITE_API_URL` gesetzt werden; außerhalb von localhost ist HTTPS erforderlich. Der lokale Demo-Login lautet im Entwicklungsmodus `admin` / `admin`; eine Registrierung gibt es nicht. Nach fünf falschen Passwörtern innerhalb von 15 Minuten wird die IP für 15 Minuten gesperrt. Admin-Tokens bleiben nur im Arbeitsspeicher der Seite und gehen beim Neuladen verloren.
+
+Für einen zusätzlichen Konfigurationsschutz kann das Backend mit `RISKPILOT_ENV=production` gestartet werden. Dann müssen `RISKPILOT_ADMIN_USER` auf einen anderen Wert als `admin` und `RISKPILOT_ADMIN_PASSWORD` auf ein Passwort mit mindestens 16 Zeichen gesetzt sein; andernfalls startet das Backend nicht. Der Backend-Zugriff ist weiterhin absichtlich auf Loopback-Clients, lokale Hostnamen und lokale Browser-Origin beschränkt. Ein Reverse Proxy oder eine öffentliche Bereitstellung ist damit nicht automatisch abgesichert oder unterstützt.
 
 Die Leaflet-Karte zeigt ausgewählte Ereignisse an Hamburger Adressen und kann offene Einsätze gemeinsam fokussieren. Bei der Adresssuche kann die Hausnummer zusammen mit der Straße eingegeben werden; Treffer müssen bei einer Hausnummer mit dem Kartendatensatz übereinstimmen. Photon verwendet OpenStreetMap-Daten und erhält den Suchtext zur Auflösung.
 

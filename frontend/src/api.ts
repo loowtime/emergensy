@@ -13,7 +13,21 @@ import type {
   StaffProtocolRevision,
 } from './types'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
+function resolveApiUrl(configuredUrl: string | undefined): string {
+  const apiUrl = new URL(configuredUrl ?? 'http://127.0.0.1:8000')
+  const isLoopback =
+    apiUrl.hostname === 'localhost'
+    || apiUrl.hostname === '127.0.0.1'
+    || apiUrl.hostname === '[::1]'
+
+  if (apiUrl.username || apiUrl.password || (apiUrl.protocol !== 'https:' && !isLoopback)) {
+    throw new Error('Die API muss HTTPS verwenden; unverschlüsseltes HTTP ist nur auf localhost erlaubt.')
+  }
+
+  return apiUrl.toString().replace(/\/+$/, '')
+}
+
+const API_URL = resolveApiUrl(import.meta.env.VITE_API_URL)
 
 export class ApiError extends Error {
   readonly status: number

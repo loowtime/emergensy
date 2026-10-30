@@ -12,7 +12,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Literal
 from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request as URLRequest, urlopen
 
 import certifi
@@ -22,9 +22,24 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 app = FastAPI()
 DATABASE_PATH = Path(__file__).with_name("riskpilot.db")
-ADMIN_USERNAME = os.getenv("RISKPILOT_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.getenv("RISKPILOT_ADMIN_PASSWORD", "admin")
-SESSION_TTL_SECONDS = 8 * 60 * 60
+RISKPILOT_ENV = os.getenv("RISKPILOT_ENV", "development").strip().lower()
+if RISKPILOT_ENV not in {"development", "production"}:
+    raise RuntimeError("RISKPILOT_ENV muss 'development' oder 'production' sein")
+
+ADMIN_USERNAME = os.getenv("RISKPILOT_ADMIN_USER", "admin" if RISKPILOT_ENV == "development" else "")
+ADMIN_PASSWORD = os.getenv("RISKPILOT_ADMIN_PASSWORD", "admin" if RISKPILOT_ENV == "development" else "")
+if RISKPILOT_ENV == "production" and (
+    not ADMIN_USERNAME
+    or ADMIN_USERNAME == "admin"
+    or len(ADMIN_PASSWORD) < 16
+    or ADMIN_PASSWORD == "admin"
+):
+    raise RuntimeError(
+        "Produktionsbetrieb erfordert RISKPILOT_ADMIN_USER != 'admin' "
+        "und ein RISKPILOT_ADMIN_PASSWORD mit mindestens 16 Zeichen"
+    )
+
+SESSION_TTL_SECONDS = 2 * 60 * 60
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_LOCK_SECONDS = 15 * 60
 MAX_LOGIN_ATTEMPTS = 5
@@ -261,13 +276,43 @@ def request_client_key(request: Request) -> str:
     return hashlib.sha256(host.encode("utf-8")).hexdigest()
 
 
+def is_loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    try:
+        hostname = urlsplit(f"//{host}").hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    if hostname.casefold() == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
 def require_local_client(request: Request):
     host = request.client.host if request.client else ""
     try:
         is_loopback = ip_address(host).is_loopback
     except ValueError:
         is_loopback = False
-    if not is_loopback:
+    request_host_is_local = is_loopback_host(request.headers.get("host"))
+    origin = request.headers.get("origin")
+    if origin:
+        try:
+            parsed_origin = urlsplit(origin)
+            origin_is_local = (
+                parsed_origin.scheme in {"http", "https"}
+                and is_loopback_host(parsed_origin.netloc)
+            )
+        except ValueError:
+            origin_is_local = False
+    else:
+        origin_is_local = True
+    if not is_loopback or not request_host_is_local or not origin_is_local:
         raise HTTPException(status_code=403, detail="Demo-Login ist nur lokal verfügbar")
 
 

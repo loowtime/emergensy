@@ -15,7 +15,7 @@ function App() {
   const [activePage, setActivePage] = useState<'overview' | 'protocol'>(() =>
     window.location.hash === '#situation-log' ? 'protocol' : 'overview',
   )
-  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem('riskpilot-token'))
+  const [token, setToken] = useState<string | null>(null)
   const [loginError, setLoginError] = useState('')
   const [apiState, setApiState] = useState<ApiConnectionState>(token ? 'checking' : 'offline')
   const [apiMessage, setApiMessage] = useState(token ? 'Verbindung wird geprüft' : 'Bitte anmelden')
@@ -52,7 +52,6 @@ function App() {
     }
   }
   const handleSessionExpired = useCallback(() => {
-    sessionStorage.removeItem('riskpilot-token')
     setToken(null)
     setEvents([])
     setApiState('offline')
@@ -101,7 +100,6 @@ function App() {
     setLoginError('')
     try {
       const accessToken = await loginAdmin(username, password)
-      sessionStorage.setItem('riskpilot-token', accessToken)
       setToken(accessToken)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Anmeldung fehlgeschlagen.')
@@ -117,7 +115,6 @@ function App() {
         logoutWarning = 'Server nicht erreichbar; die Sitzung läuft automatisch ab.'
       }
     }
-    sessionStorage.removeItem('riskpilot-token')
     setToken(null)
     setEvents([])
     setApiState('offline')
