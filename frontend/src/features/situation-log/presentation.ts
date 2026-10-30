@@ -8,12 +8,19 @@ export const SITUATION_LOG_TYPE_LABELS: Record<SituationLogType, string> = {
   handover: 'Übergabe',
 }
 
-export function formatSituationTimestamp(value: string): string {
+const timezoneSuffix = /(?:Z|[+-]\d{2}:?\d{2})$/i
+const timestampFormatter = new Intl.DateTimeFormat('de-DE', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+})
+
+function parseSituationTimestamp(value: string): Date {
   const normalized = value.trim().replace(' ', 'T')
-  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized)
-  const timestamp = new Date(hasTimezone ? normalized : `${normalized}Z`)
+  const timestamp = timezoneSuffix.test(normalized) ? normalized : `${normalized}Z`
+  return new Date(timestamp)
+}
 
-  if (Number.isNaN(timestamp.getTime())) return value
-
-  return timestamp.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
+export function formatSituationTimestamp(value: string): string {
+  const timestamp = parseSituationTimestamp(value)
+  return Number.isNaN(timestamp.getTime()) ? value : timestampFormatter.format(timestamp)
 }
