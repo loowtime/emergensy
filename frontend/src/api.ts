@@ -19,9 +19,19 @@ function resolveApiUrl(configuredUrl: string | undefined): string {
     apiUrl.hostname === 'localhost'
     || apiUrl.hostname === '127.0.0.1'
     || apiUrl.hostname === '[::1]'
+  const isAllowedProtocol = apiUrl.protocol === 'https:' || (apiUrl.protocol === 'http:' && isLoopback)
 
-  if (apiUrl.username || apiUrl.password || (apiUrl.protocol !== 'https:' && !isLoopback)) {
-    throw new Error('Die API muss HTTPS verwenden; unverschlüsseltes HTTP ist nur auf localhost erlaubt.')
+  if (
+    apiUrl.username
+    || apiUrl.password
+    || apiUrl.pathname !== '/'
+    || apiUrl.search
+    || apiUrl.hash
+    || !isAllowedProtocol
+  ) {
+    throw new Error(
+      'VITE_API_URL muss ein sicherer API-Origin ohne Pfad oder Zugangsdaten sein; HTTP ist nur auf localhost erlaubt.',
+    )
   }
 
   return apiUrl.toString().replace(/\/+$/, '')
