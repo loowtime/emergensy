@@ -143,10 +143,10 @@ export function SituationLogPanel({ token, events, onSessionExpired, onNotice }:
   }
 
   return (
-    <section className="situation-panel card" id="situation-log" aria-labelledby="situation-log-title">
+    <section className="situation-panel card" id="activity-journal" aria-labelledby="situation-log-title">
       <div className="panel-heading situation-heading card-header">
         <div>
-          <h2 id="situation-log-title">Stabsprotokoll</h2>
+          <h2 id="situation-log-title">Laufendes Stabsjournal</h2>
           <p><ClipboardList size={13} /> Lage, Entscheidungen, Maßnahmen, Ressourcen und Übergaben nachvollziehbar festhalten</p>
         </div>
         <span className="situation-count">{total} Einträge gesamt</span>

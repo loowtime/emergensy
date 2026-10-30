@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Activity, AlertTriangle, Check, ClipboardList, Clock3, Layers3, LogOut, MapPin, Plus, RefreshCw, Shield, Siren, X } from 'lucide-react'
+import { Activity, AlertTriangle, Check, Clock3, LogOut, Plus, RefreshCw, Shield, Siren, X } from 'lucide-react'
+import { IconAlertTriangle, IconClipboardText, IconHome2, IconMap2 } from '@tabler/icons-react'
 import { ApiError, loadEvents, loginAdmin, logoutAdmin, removeEvent, requestBackend, setEventStatus } from './api'
 import { LoginPage } from './features/auth/LoginPage'
 import { EventCreateDialog } from './features/events/EventCreateDialog'
 import { IncidentList } from './features/events/IncidentList'
 import { IncidentMap } from './features/events/IncidentMap'
 import { SituationLogPanel } from './features/situation-log/SituationLogPanel'
+import { StaffProtocolPage } from './features/staff-protocol/StaffProtocolPage'
 import type { ApiConnectionState, EventStatus, RiskEvent } from './types'
 import './App.css'
 
 function App() {
+  const [activePage, setActivePage] = useState<'overview' | 'protocol'>(() =>
+    window.location.hash === '#situation-log' ? 'protocol' : 'overview',
+  )
   const [token, setToken] = useState<string | null>(() => sessionStorage.getItem('riskpilot-token'))
   const [loginError, setLoginError] = useState('')
   const [apiState, setApiState] = useState<ApiConnectionState>(token ? 'checking' : 'offline')
@@ -19,6 +24,33 @@ function App() {
   const [deletingEventId, setDeletingEventId] = useState<number | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [notice, setNotice] = useState('')
+
+  useEffect(() => {
+    function syncPageFromLocation() {
+      setActivePage(window.location.hash === '#situation-log' ? 'protocol' : 'overview')
+    }
+    window.addEventListener('hashchange', syncPageFromLocation)
+    window.addEventListener('popstate', syncPageFromLocation)
+    return () => {
+      window.removeEventListener('hashchange', syncPageFromLocation)
+      window.removeEventListener('popstate', syncPageFromLocation)
+    }
+  }, [])
+
+  function navigateTo(target: 'overview' | 'protocol' | 'incidents' | 'map') {
+    const hash = target === 'protocol'
+      ? '#situation-log'
+      : target === 'incidents' || target === 'map'
+        ? `#${target}`
+        : '#overview'
+    window.history.pushState(null, '', hash)
+    setActivePage(target === 'protocol' ? 'protocol' : 'overview')
+    if (target === 'incidents' || target === 'map') {
+      window.setTimeout(() => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' }), 0)
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
   const handleSessionExpired = useCallback(() => {
     sessionStorage.removeItem('riskpilot-token')
     setToken(null)
@@ -129,22 +161,22 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="rail" aria-label="Hauptnavigation">
-        <a className="brand-mark" href="#overview" aria-label="RiskPilot Startseite">
+        <a className="brand-mark" href="#overview" aria-label="RiskPilot Startseite" onClick={(event) => { event.preventDefault(); navigateTo('overview') }}>
           <Shield size={22} strokeWidth={2.2} />
           <span>R</span>
         </a>
         <div className="rail-divider" />
-        <a className="rail-button rail-button--active" href="#overview" title="Lageübersicht" aria-label="Lageübersicht" aria-current="page">
-          <Layers3 size={19} />
+        <a className={activePage === 'overview' ? 'rail-button rail-button--active' : 'rail-button'} href="#overview" title="Lageübersicht" aria-label="Lageübersicht" aria-current={activePage === 'overview' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateTo('overview') }}>
+          <IconHome2 size={19} stroke={1.8} />
         </a>
-        <a className="rail-button" href="#incidents" title="Einsatzmeldungen" aria-label="Einsatzmeldungen">
-          <Siren size={19} />
+        <a className="rail-button" href="#incidents" title="Einsatzmeldungen" aria-label="Einsatzmeldungen" onClick={(event) => { event.preventDefault(); navigateTo('incidents') }}>
+          <IconAlertTriangle size={19} stroke={1.8} />
         </a>
-        <a className="rail-button" href="#map" title="Lagekarte" aria-label="Lagekarte">
-          <MapPin size={19} />
+        <a className="rail-button" href="#map" title="Lagekarte" aria-label="Lagekarte" onClick={(event) => { event.preventDefault(); navigateTo('map') }}>
+          <IconMap2 size={19} stroke={1.8} />
         </a>
-        <a className="rail-button" href="#situation-log" title="Stabsprotokoll" aria-label="Stabsprotokoll">
-          <ClipboardList size={19} />
+        <a className={activePage === 'protocol' ? 'rail-button rail-button--active' : 'rail-button'} href="#situation-log" title="Stabsprotokoll" aria-label="Stabsprotokoll" aria-current={activePage === 'protocol' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateTo('protocol') }}>
+          <IconClipboardText size={19} stroke={1.8} />
         </a>
         <div className="rail-spacer" />
         <button className="avatar logout-avatar" title="Abmelden" aria-label="Abmelden" onClick={() => void handleLogout()}>
@@ -152,12 +184,12 @@ function App() {
         </button>
       </aside>
 
-      <main className="workspace" id="overview">
+      <main className="workspace" id={activePage === 'overview' ? 'overview' : 'staff-protocol'}>
         <header className="topbar">
           <div className="breadcrumb">
             <span>RISKPILOT</span>
             <span className="breadcrumb-slash">/</span>
-            <strong>Einsatzübersicht</strong>
+            <strong>{activePage === 'protocol' ? 'Stabsprotokoll' : 'Einsatzübersicht'}</strong>
           </div>
           <div className="topbar-right">
             <div className={`connection-pill connection-pill--${apiState}`}>
@@ -172,6 +204,8 @@ function App() {
           </div>
         </header>
 
+        {activePage === 'overview' ? (
+          <>
         <section className="page-heading">
           <div>
             <div className="eyebrow"><span className="live-dot" /> FORSCHUNGSPROTOTYP · HAMBURG</div>
@@ -230,6 +264,10 @@ function App() {
           />
         </section>
         <SituationLogPanel token={token} events={events} onSessionExpired={handleSessionExpired} onNotice={setNotice} />
+          </>
+        ) : (
+          <StaffProtocolPage token={token} onSessionExpired={handleSessionExpired} onNotice={setNotice} />
+        )}
         <footer className="status-footer">
           <span><span className={`footer-status-dot footer-status-dot--${apiState}`} /> Daten lokal im Demonstrationsbetrieb gespeichert</span>
           <span>RISKPILOT <i /> FORSCHUNGSPROTOTYP</span>

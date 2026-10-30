@@ -18,7 +18,7 @@ from urllib.request import Request as URLRequest, urlopen
 import certifi
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 app = FastAPI()
 DATABASE_PATH = Path(__file__).with_name("riskpilot.db")
@@ -77,6 +77,43 @@ def initialize_database():
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS staff_protocols (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_date TEXT NOT NULL DEFAULT '',
+                meeting_time TEXT NOT NULL DEFAULT '',
+                revision INTEGER NOT NULL DEFAULT 1,
+                protocol_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        protocol_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(staff_protocols)")
+        }
+        if "meeting_date" not in protocol_columns:
+            connection.execute(
+                "ALTER TABLE staff_protocols ADD COLUMN meeting_date TEXT NOT NULL DEFAULT ''"
+            )
+        if "meeting_time" not in protocol_columns:
+            connection.execute(
+                "ALTER TABLE staff_protocols ADD COLUMN meeting_time TEXT NOT NULL DEFAULT ''"
+            )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS staff_protocol_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                protocol_id INTEGER NOT NULL REFERENCES staff_protocols(id) ON DELETE CASCADE,
+                revision INTEGER NOT NULL,
+                changed_by TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(protocol_id, revision)
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_staff_protocol_revisions_protocol "
+            "ON staff_protocol_revisions(protocol_id, revision DESC)"
+        )
         connection.commit()
 
 
@@ -128,6 +165,91 @@ class SituationLogCreate(BaseModel):
     content: str = Field(min_length=1, max_length=1200)
     author: str = Field(min_length=1, max_length=80)
     event_id: int | None = Field(default=None, ge=1)
+
+
+class StaffProtocolInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class StaffProtocolRisk(StaffProtocolInput):
+    id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str = Field(min_length=3, max_length=180)
+    probability: int = Field(ge=1, le=5)
+    impact: int = Field(ge=1, le=5)
+    response_plan: str = Field(default="", max_length=1200)
+
+
+class StaffProtocolTopic(StaffProtocolInput):
+    id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
+    title: str = Field(min_length=3, max_length=180)
+    findings: str = Field(default="", max_length=1200)
+
+
+class StaffProtocolDecision(StaffProtocolInput):
+    id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
+    text: str = Field(min_length=3, max_length=500)
+    rationale: str = Field(default="", max_length=1200)
+    owner: str = Field(min_length=2, max_length=120)
+    risk_id: str | None = Field(default=None, max_length=36)
+
+
+class StaffProtocolMeasure(StaffProtocolInput):
+    id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
+    task: str = Field(min_length=3, max_length=500)
+    owner: str = Field(min_length=2, max_length=120)
+    due_date: date | None = None
+    status: Literal["open", "in_progress", "completed"] = "open"
+    decision_id: str | None = Field(default=None, max_length=36)
+
+
+class StaffProtocolOpenPoint(StaffProtocolInput):
+    id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
+    question: str = Field(min_length=3, max_length=500)
+    owner: str = Field(default="", max_length=120)
+    follow_up_date: date | None = None
+
+
+class StaffProtocolDocument(StaffProtocolInput):
+    title: str = Field(min_length=3, max_length=160)
+    meeting_date: date
+    meeting_time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    session_lead: str = Field(min_length=2, max_length=120)
+    participants: str = Field(default="", max_length=2000)
+    recorder: str = Field(min_length=2, max_length=120)
+    occasion: str = Field(min_length=3, max_length=1200)
+    situation_summary: str = Field(default="", max_length=4000)
+    risks: list[StaffProtocolRisk] = Field(default_factory=list, max_length=50)
+    topics: list[StaffProtocolTopic] = Field(default_factory=list, max_length=50)
+    decisions: list[StaffProtocolDecision] = Field(default_factory=list, max_length=50)
+    measures: list[StaffProtocolMeasure] = Field(default_factory=list, max_length=100)
+    open_points: list[StaffProtocolOpenPoint] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_references(self):
+        risk_ids = [risk.id for risk in self.risks]
+        topic_ids = [topic.id for topic in self.topics]
+        decision_ids = [decision.id for decision in self.decisions]
+        measure_ids = [measure.id for measure in self.measures]
+        open_point_ids = [point.id for point in self.open_points]
+        for label, identifiers in (
+            ("Risiko", risk_ids),
+            ("Thema", topic_ids),
+            ("Beschluss", decision_ids),
+            ("Maßnahme", measure_ids),
+            ("Offener Punkt", open_point_ids),
+        ):
+            if len(identifiers) != len(set(identifiers)):
+                raise ValueError(f"{label}-IDs müssen innerhalb des Protokolls eindeutig sein")
+        if any(decision.risk_id and decision.risk_id not in risk_ids for decision in self.decisions):
+            raise ValueError("Ein Beschluss verweist auf ein unbekanntes Risiko")
+        if any(measure.decision_id and measure.decision_id not in decision_ids for measure in self.measures):
+            raise ValueError("Eine Maßnahme verweist auf einen unbekannten Beschluss")
+        return self
+
+
+class StaffProtocolUpdate(StaffProtocolInput):
+    expected_revision: int = Field(ge=1)
+    protocol: StaffProtocolDocument
 
 
 def serialize_event(row: sqlite3.Row):
@@ -396,6 +518,162 @@ def create_situation_log_entry(entry: SituationLogCreate, _: str = Depends(requi
             (cursor.lastrowid,),
         ).fetchone()
     return dict(row)
+
+
+def serialize_staff_protocol(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "revision": row["revision"],
+        "protocol": json.loads(row["protocol_json"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+@app.get("/api/staff-protocols")
+def list_staff_protocols(
+    offset: int = Query(default=0, ge=0, le=1_000_000),
+    limit: int = Query(default=50, ge=1, le=100),
+    _: str = Depends(require_admin),
+):
+    with closing(get_connection()) as connection:
+        total = connection.execute("SELECT COUNT(*) FROM staff_protocols").fetchone()[0]
+        rows = connection.execute(
+            """SELECT * FROM staff_protocols
+               ORDER BY meeting_date DESC, meeting_time DESC, id DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ).fetchall()
+    return {
+        "records": [serialize_staff_protocol(row) for row in rows],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+@app.post("/api/staff-protocols", status_code=201)
+def create_staff_protocol(protocol: StaffProtocolDocument, _: str = Depends(require_admin)):
+    protocol_json = json.dumps(protocol.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with closing(get_connection()) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        cursor = connection.execute(
+            """INSERT INTO staff_protocols
+               (meeting_date, meeting_time, revision, protocol_json, created_at, updated_at)
+               VALUES (?, ?, 1, ?, ?, ?)""",
+            (
+                protocol.meeting_date.isoformat(),
+                protocol.meeting_time,
+                protocol_json,
+                timestamp,
+                timestamp,
+            ),
+        )
+        protocol_id = cursor.lastrowid
+        connection.execute(
+            """INSERT INTO staff_protocol_revisions
+               (protocol_id, revision, changed_by, snapshot_json, created_at)
+               VALUES (?, 1, 'Admin', ?, ?)""",
+            (protocol_id, protocol_json, timestamp),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM staff_protocols WHERE id = ?", (protocol_id,)
+        ).fetchone()
+    return serialize_staff_protocol(row)
+
+
+@app.get("/api/staff-protocols/{protocol_id}")
+def get_staff_protocol(protocol_id: int, _: str = Depends(require_admin)):
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            "SELECT * FROM staff_protocols WHERE id = ?", (protocol_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Stabsprotokoll nicht gefunden")
+    return serialize_staff_protocol(row)
+
+
+@app.put("/api/staff-protocols/{protocol_id}")
+def update_staff_protocol(
+    protocol_id: int,
+    update: StaffProtocolUpdate,
+    _: str = Depends(require_admin),
+):
+    protocol_json = json.dumps(
+        update.protocol.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+    )
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with closing(get_connection()) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute(
+            "SELECT revision FROM staff_protocols WHERE id = ?", (protocol_id,)
+        ).fetchone()
+        if current is None:
+            connection.rollback()
+            raise HTTPException(status_code=404, detail="Stabsprotokoll nicht gefunden")
+        if current["revision"] != update.expected_revision:
+            connection.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Das Protokoll wurde zwischenzeitlich geändert. Bitte neu laden.",
+            )
+        revision = current["revision"] + 1
+        connection.execute(
+            """UPDATE staff_protocols
+               SET meeting_date = ?, meeting_time = ?, revision = ?,
+                   protocol_json = ?, updated_at = ?
+               WHERE id = ?""",
+            (
+                update.protocol.meeting_date.isoformat(),
+                update.protocol.meeting_time,
+                revision,
+                protocol_json,
+                timestamp,
+                protocol_id,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO staff_protocol_revisions
+               (protocol_id, revision, changed_by, snapshot_json, created_at)
+               VALUES (?, ?, 'Admin', ?, ?)""",
+            (protocol_id, revision, protocol_json, timestamp),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM staff_protocols WHERE id = ?", (protocol_id,)
+        ).fetchone()
+    return serialize_staff_protocol(row)
+
+
+@app.get("/api/staff-protocols/{protocol_id}/revisions")
+def list_staff_protocol_revisions(
+    protocol_id: int,
+    _: str = Depends(require_admin),
+):
+    with closing(get_connection()) as connection:
+        protocol = connection.execute(
+            "SELECT 1 FROM staff_protocols WHERE id = ?", (protocol_id,)
+        ).fetchone()
+        if protocol is None:
+            raise HTTPException(status_code=404, detail="Stabsprotokoll nicht gefunden")
+        rows = connection.execute(
+            """SELECT revision, changed_by, snapshot_json, created_at
+               FROM staff_protocol_revisions
+               WHERE protocol_id = ?
+               ORDER BY revision DESC""",
+            (protocol_id,),
+        ).fetchall()
+    return [
+        {
+            "revision": row["revision"],
+            "changed_by": row["changed_by"],
+            "protocol": json.loads(row["snapshot_json"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
 
 
 @app.get("/api/locations/search")

@@ -43,6 +43,73 @@ export type SituationReport = {
   total: number
   entries: SituationLogEntry[]
 }
+export type StaffProtocolRisk = {
+  id: string
+  title: string
+  probability: number
+  impact: number
+  response_plan: string
+}
+export type StaffProtocolTopic = {
+  id: string
+  title: string
+  findings: string
+}
+export type StaffProtocolDecision = {
+  id: string
+  text: string
+  rationale: string
+  owner: string
+  risk_id: string | null
+}
+export type StaffProtocolMeasure = {
+  id: string
+  task: string
+  owner: string
+  due_date: string | null
+  status: 'open' | 'in_progress' | 'completed'
+  decision_id: string | null
+}
+export type StaffProtocolOpenPoint = {
+  id: string
+  question: string
+  owner: string
+  follow_up_date: string | null
+}
+export type StaffProtocolDocument = {
+  title: string
+  meeting_date: string
+  meeting_time: string
+  session_lead: string
+  participants: string
+  recorder: string
+  occasion: string
+  situation_summary: string
+  risks: StaffProtocolRisk[]
+  topics: StaffProtocolTopic[]
+  decisions: StaffProtocolDecision[]
+  measures: StaffProtocolMeasure[]
+  open_points: StaffProtocolOpenPoint[]
+}
+export type StaffProtocolRecord = {
+  id: number
+  revision: number
+  protocol: StaffProtocolDocument
+  created_at: string
+  updated_at: string
+}
+export type StaffProtocolRevision = {
+  revision: number
+  changed_by: string
+  protocol: StaffProtocolDocument
+  created_at: string
+}
+export type StaffProtocolPage = {
+  records: StaffProtocolRecord[]
+  total: number
+  offset: number
+  limit: number
+}
 export type OperationLocation = {
   address: string
   label: string

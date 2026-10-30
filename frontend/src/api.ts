@@ -7,6 +7,10 @@ import type {
   SituationLogFilters,
   SituationLogPage,
   SituationReport,
+  StaffProtocolDocument,
+  StaffProtocolPage,
+  StaffProtocolRecord,
+  StaffProtocolRevision,
 } from './types'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
@@ -103,6 +107,71 @@ export async function saveSituationLogEntry(
     body: JSON.stringify(entry),
   })
   if (!response.ok) throw new ApiError('Stabseintrag konnte nicht gespeichert werden', response.status)
+  return response.json()
+}
+
+export async function loadStaffProtocols(
+  token: string,
+  offset: number,
+): Promise<StaffProtocolPage> {
+  const parameters = new URLSearchParams({ offset: String(offset), limit: '50' })
+  const response = await fetch(`${API_URL}/api/staff-protocols?${parameters}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) throw new ApiError('Stabsprotokolle konnten nicht geladen werden', response.status)
+  return response.json()
+}
+
+export async function loadStaffProtocolRevisions(
+  token: string,
+  protocolId: number,
+): Promise<StaffProtocolRevision[]> {
+  const response = await fetch(`${API_URL}/api/staff-protocols/${protocolId}/revisions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) throw new ApiError('Protokollhistorie konnte nicht geladen werden', response.status)
+  return response.json()
+}
+
+export async function loadStaffProtocol(
+  token: string,
+  protocolId: number,
+): Promise<StaffProtocolRecord> {
+  const response = await fetch(`${API_URL}/api/staff-protocols/${protocolId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) throw new ApiError('Aktuelles Stabsprotokoll konnte nicht geladen werden', response.status)
+  return response.json()
+}
+
+export async function createStaffProtocol(
+  token: string,
+  protocol: StaffProtocolDocument,
+): Promise<StaffProtocolRecord> {
+  const response = await fetch(`${API_URL}/api/staff-protocols`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(protocol),
+  })
+  if (!response.ok) throw new ApiError('Stabsprotokoll konnte nicht gespeichert werden', response.status)
+  return response.json()
+}
+
+export async function updateStaffProtocol(
+  token: string,
+  protocolId: number,
+  expectedRevision: number,
+  protocol: StaffProtocolDocument,
+): Promise<StaffProtocolRecord> {
+  const response = await fetch(`${API_URL}/api/staff-protocols/${protocolId}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expected_revision: expectedRevision, protocol }),
+  })
+  if (response.status === 409) {
+    throw new ApiError('Dieses Protokoll wurde zwischenzeitlich geändert. Lade die aktuelle Fassung und wiederhole deine Änderungen.', 409)
+  }
+  if (!response.ok) throw new ApiError('Änderungen am Stabsprotokoll konnten nicht gespeichert werden', response.status)
   return response.json()
 }
 
