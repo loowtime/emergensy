@@ -44,12 +44,12 @@ export function IncidentMap({ events }: { events: RiskEvent[] }) {
   }
 
   return (
-    <article className="map-panel" id="map">
-      <div className="panel-heading map-heading">
+    <article className="map-panel card" id="map">
+      <div className="panel-heading map-heading card-header">
         <div><h2>Lagekarte Hamburg</h2><p><span className="map-live-dot" /> {mappedEvents.length} Ereignisse auf Karte <span className="panel-separator">·</span> Einsatzgebiet Hamburg</p></div>
         <div className="map-tools">
-          <button className="map-tool" title="Offene Ereignisse einblenden" aria-label="Offene Ereignisse einblenden" disabled={!mapInstance} onClick={focusOpenEvents}><Focus size={16} /></button>
-          <button className="map-tool" title="Karte auf Hamburg zentrieren" aria-label="Karte auf Hamburg zentrieren" disabled={!mapInstance} onClick={() => mapInstance?.setView(HAMBURG_CENTER, 12)}><LocateFixed size={16} /></button>
+          <button className="map-tool btn btn-outline-secondary btn-sm" title="Offene Ereignisse einblenden" aria-label="Offene Ereignisse einblenden" disabled={!mapInstance} onClick={focusOpenEvents}><Focus size={16} /></button>
+          <button className="map-tool btn btn-outline-secondary btn-sm" title="Karte auf Hamburg zentrieren" aria-label="Karte auf Hamburg zentrieren" disabled={!mapInstance} onClick={() => mapInstance?.setView(HAMBURG_CENTER, 12)}><LocateFixed size={16} /></button>
         </div>
       </div>
       <div className="map-wrap">

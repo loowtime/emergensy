@@ -1,5 +1,6 @@
 export type Severity = 'critical' | 'warning' | 'info'
 export type EventStatus = 'open' | 'monitoring' | 'resolved'
+export type ApiConnectionState = 'checking' | 'online' | 'offline'
 export type RiskEvent = {
   id: number
   title: string

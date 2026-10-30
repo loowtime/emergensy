@@ -58,7 +58,7 @@
 }
 
 .leaflet-container {
-  font-family: 'Manrope', sans-serif;
+  font-family: inherit;
 }
 
 .leaflet-control-attribution {

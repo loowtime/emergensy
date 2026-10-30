@@ -8,6 +8,7 @@ import type {
   SituationLogType,
 } from '../../types'
 import { createPrintableSituationReport } from './printableReport'
+import { formatSituationTimestamp, SITUATION_LOG_TYPE_LABELS } from './presentation'
 import './SituationLogPanel.css'
 
 const EMPTY_FILTERS: SituationLogFilters = {
@@ -23,21 +24,6 @@ type Props = {
   events: RiskEvent[]
   onSessionExpired: () => void
   onNotice: (message: string) => void
-}
-
-function typeLabel(type: SituationLogType): string {
-  switch (type) {
-    case 'observation': return 'Beobachtung'
-    case 'decision': return 'Entscheidung'
-    case 'measure': return 'Maßnahme'
-    case 'resource': return 'Ressource'
-    case 'handover': return 'Übergabe'
-  }
-}
-
-function formatTimestamp(value: string): string {
-  const timestamp = value.includes('Z') || value.includes('+') ? value : `${value.replace(' ', 'T')}Z`
-  return new Date(timestamp).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
 }
 
 export function SituationLogPanel({ token, events, onSessionExpired, onNotice }: Props) {
@@ -157,8 +143,8 @@ export function SituationLogPanel({ token, events, onSessionExpired, onNotice }:
   }
 
   return (
-    <section className="situation-panel" id="situation-log" aria-labelledby="situation-log-title">
-      <div className="panel-heading situation-heading">
+    <section className="situation-panel card" id="situation-log" aria-labelledby="situation-log-title">
+      <div className="panel-heading situation-heading card-header">
         <div>
           <h2 id="situation-log-title">Stabsprotokoll</h2>
           <p><ClipboardList size={13} /> Lage, Entscheidungen, Maßnahmen, Ressourcen und Übergaben nachvollziehbar festhalten</p>
@@ -166,72 +152,72 @@ export function SituationLogPanel({ token, events, onSessionExpired, onNotice }:
         <span className="situation-count">{total} Einträge gesamt</span>
       </div>
       <div className="report-controls">
-        <label>Berichtstitel
-          <input maxLength={120} value={reportTitle} onChange={(change) => setReportTitle(change.target.value)} />
+        <label className="form-label">Berichtstitel
+          <input className="form-control form-control-sm" maxLength={120} value={reportTitle} onChange={(change) => setReportTitle(change.target.value)} />
         </label>
-        <label>Teilnehmende / Funktionen
-          <input maxLength={300} value={participants} onChange={(change) => setParticipants(change.target.value)} placeholder="z. B. Einsatzleitung, Lage, Verbindung" />
+        <label className="form-label">Teilnehmende / Funktionen
+          <input className="form-control form-control-sm" maxLength={300} value={participants} onChange={(change) => setParticipants(change.target.value)} placeholder="z. B. Einsatzleitung, Lage, Verbindung" />
         </label>
-        <button type="button" className="create-event-button" disabled={isGenerating} onClick={() => void handleGenerateReport()}>
+        <button type="button" className="create-event-button btn btn-primary" disabled={isGenerating} onClick={() => void handleGenerateReport()}>
           <ClipboardList size={15} />{isGenerating ? 'Bericht wird erstellt …' : 'Bericht erstellen / PDF'}
         </button>
       </div>
       <div className="situation-content">
         <form className="situation-form" onSubmit={(submitEvent) => void handleCreateEntry(submitEvent)}>
-          <label>Eintragstyp
-            <select value={entryType} onChange={(change) => setEntryType(change.target.value as SituationLogType)}>
-              <option value="observation">Beobachtung</option>
-              <option value="decision">Entscheidung</option>
-              <option value="measure">Maßnahme</option>
-              <option value="resource">Ressource</option>
-              <option value="handover">Übergabe</option>
+          <label className="form-label">Eintragstyp
+            <select className="form-select form-select-sm" value={entryType} onChange={(change) => setEntryType(change.target.value as SituationLogType)}>
+              <option value="observation">{SITUATION_LOG_TYPE_LABELS.observation}</option>
+              <option value="decision">{SITUATION_LOG_TYPE_LABELS.decision}</option>
+              <option value="measure">{SITUATION_LOG_TYPE_LABELS.measure}</option>
+              <option value="resource">{SITUATION_LOG_TYPE_LABELS.resource}</option>
+              <option value="handover">{SITUATION_LOG_TYPE_LABELS.handover}</option>
             </select>
           </label>
-          <label>Kürzel / Name
-            <input required minLength={1} maxLength={80} value={author} onChange={(change) => setAuthor(change.target.value)} />
+          <label className="form-label">Kürzel / Name
+            <input className="form-control form-control-sm" required minLength={1} maxLength={80} value={author} onChange={(change) => setAuthor(change.target.value)} />
           </label>
-          <label>Bezug zu Ereignis
-            <select value={eventId} onChange={(change) => setEventId(change.target.value)}>
+          <label className="form-label">Bezug zu Ereignis
+            <select className="form-select form-select-sm" value={eventId} onChange={(change) => setEventId(change.target.value)}>
               <option value="">Allgemeine Lage</option>
               {events.map((event) => <option key={event.id} value={event.id}>#{event.id} · {event.title}</option>)}
             </select>
           </label>
-          <label>Eintrag
-            <textarea required minLength={1} maxLength={1200} rows={4} value={content} onChange={(change) => setContent(change.target.value)} placeholder="Sachlich festhalten: Was ist bekannt oder wurde entschieden?" />
+          <label className="form-label">Eintrag
+            <textarea className="form-control form-control-sm" required minLength={1} maxLength={1200} rows={4} value={content} onChange={(change) => setContent(change.target.value)} placeholder="Sachlich festhalten: Was ist bekannt oder wurde entschieden?" />
           </label>
-          <button className="create-event-button situation-submit" type="submit" disabled={isSaving}>
+          <button className="create-event-button situation-submit btn btn-primary" type="submit" disabled={isSaving}>
             <Plus size={15} />{isSaving ? 'Wird gespeichert …' : 'Eintrag protokollieren'}
           </button>
           <p className="situation-note">Einträge werden mit Serverzeit gespeichert und können nicht nachträglich bearbeitet oder gelöscht werden. Das Kürzel wird manuell eingegeben.</p>
         </form>
         <div className="situation-history">
           <form className="situation-filters" onSubmit={(submitEvent) => void handleFilter(submitEvent)}>
-            <label>Suche
-              <input maxLength={120} value={filters.query} onChange={(change) => setFilters({ ...filters, query: change.target.value })} placeholder="Text, Kürzel oder Ereignis" />
+            <label className="form-label">Suche
+              <input className="form-control form-control-sm" maxLength={120} value={filters.query} onChange={(change) => setFilters({ ...filters, query: change.target.value })} placeholder="Text, Kürzel oder Ereignis" />
             </label>
-            <label>Eintragstyp
-              <select value={filters.entryType} onChange={(change) => setFilters({ ...filters, entryType: change.target.value as SituationLogFilters['entryType'] })}>
+            <label className="form-label">Eintragstyp
+              <select className="form-select form-select-sm" value={filters.entryType} onChange={(change) => setFilters({ ...filters, entryType: change.target.value as SituationLogFilters['entryType'] })}>
                 <option value="">Alle Typen</option>
-                <option value="observation">Beobachtung</option>
-                <option value="decision">Entscheidung</option>
-                <option value="measure">Maßnahme</option>
-                <option value="resource">Ressource</option>
-                <option value="handover">Übergabe</option>
+                <option value="observation">{SITUATION_LOG_TYPE_LABELS.observation}</option>
+                <option value="decision">{SITUATION_LOG_TYPE_LABELS.decision}</option>
+                <option value="measure">{SITUATION_LOG_TYPE_LABELS.measure}</option>
+                <option value="resource">{SITUATION_LOG_TYPE_LABELS.resource}</option>
+                <option value="handover">{SITUATION_LOG_TYPE_LABELS.handover}</option>
               </select>
             </label>
-            <label>Ereignis
-              <select value={filters.eventId} onChange={(change) => setFilters({ ...filters, eventId: change.target.value })}>
+            <label className="form-label">Ereignis
+              <select className="form-select form-select-sm" value={filters.eventId} onChange={(change) => setFilters({ ...filters, eventId: change.target.value })}>
                 <option value="">Alle Ereignisse</option>
                 {events.map((event) => <option key={event.id} value={event.id}>#{event.id} · {event.title}</option>)}
               </select>
             </label>
-            <label>Von
-              <input type="date" value={filters.fromDate} onChange={(change) => setFilters({ ...filters, fromDate: change.target.value })} />
+            <label className="form-label">Von
+              <input className="form-control form-control-sm" type="date" value={filters.fromDate} onChange={(change) => setFilters({ ...filters, fromDate: change.target.value })} />
             </label>
-            <label>Bis
-              <input type="date" value={filters.toDate} onChange={(change) => setFilters({ ...filters, toDate: change.target.value })} />
+            <label className="form-label">Bis
+              <input className="form-control form-control-sm" type="date" value={filters.toDate} onChange={(change) => setFilters({ ...filters, toDate: change.target.value })} />
             </label>
-            <button className="refresh-button" type="submit">Historie filtern</button>
+            <button className="refresh-button btn btn-outline-secondary btn-sm" type="submit">Historie filtern</button>
           </form>
           <div className="situation-feed" aria-live="polite">
             {entries.length === 0
@@ -239,8 +225,8 @@ export function SituationLogPanel({ token, events, onSessionExpired, onNotice }:
               : entries.map((entry) => (
                 <article className="situation-entry" key={entry.id}>
                   <div className="situation-entry-top">
-                    <span className={`situation-type situation-type--${entry.entry_type}`}>{typeLabel(entry.entry_type)}</span>
-                    <time dateTime={entry.created_at}>{formatTimestamp(entry.created_at)}</time>
+                    <span className={`situation-type badge situation-type--${entry.entry_type}`}>{SITUATION_LOG_TYPE_LABELS[entry.entry_type]}</span>
+                    <time dateTime={entry.created_at}>{formatSituationTimestamp(entry.created_at)}</time>
                   </div>
                   <p>{entry.content}</p>
                   <div className="situation-entry-meta"><span>{entry.author}</span>{entry.event_id !== null && <span>Ereignis #{entry.event_id}{entry.event_title ? ` · ${entry.event_title}` : ' · nicht mehr aktiv'}</span>}</div>
@@ -250,8 +236,8 @@ export function SituationLogPanel({ token, events, onSessionExpired, onNotice }:
           <div className="situation-pagination">
             <span>{total === 0 ? '0' : `${offset + 1}–${Math.min(offset + entries.length, total)}`} von {total}</span>
             <div>
-              <button type="button" className="refresh-button" disabled={offset === 0} onClick={() => void fetchPage(activeFilters, Math.max(0, offset - 50))}>Zurück</button>
-              <button type="button" className="refresh-button" disabled={offset + 50 >= total} onClick={() => void fetchPage(activeFilters, offset + 50)}>Weitere Einträge</button>
+              <button type="button" className="refresh-button btn btn-outline-secondary btn-sm" disabled={offset === 0} onClick={() => void fetchPage(activeFilters, Math.max(0, offset - 50))}>Zurück</button>
+              <button type="button" className="refresh-button btn btn-outline-secondary btn-sm" disabled={offset + 50 >= total} onClick={() => void fetchPage(activeFilters, offset + 50)}>Weitere Einträge</button>
             </div>
           </div>
         </div>

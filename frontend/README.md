@@ -1,6 +1,7 @@
 # RiskPilot Frontend
 
 React 19, TypeScript und Vite bilden das Frontend des Ereignis-Dashboards.
+Halfmoon 2 stellt die UI-Grundkomponenten bereit; die variable Inter-Schrift wird lokal gebündelt.
 
 ## Entwicklung
 
@@ -24,6 +25,6 @@ Kürzel und Teilnehmende werden manuell eingegeben; das Protokoll ist kein manip
 - `src/App.tsx` verbindet Sitzungsverwaltung, Dashboard und Feature-Komponenten.
 - `src/api.ts` bündelt typisierte Backend-Aufrufe; `src/types.ts` enthält gemeinsame Domänentypen.
 - `src/features/auth/` enthält die Admin-Anmeldung samt eigenen Styles.
-- `src/features/events/` enthält Ereigniserstellung, Lagekarte und Hamburger Einsatzorte.
-- `src/features/situation-log/` enthält Protokoll, Historie und Druckbericht.
+- `src/features/events/` enthält Ereigniserstellung, Lagekarte, Ereignisliste und Hamburger Einsatzorte.
+- `src/features/situation-log/` enthält Protokoll, Historie, gemeinsame Darstellung und Druckbericht.
 - Styles liegen bei den jeweiligen Features; `src/App.css` enthält weiterhin die gemeinsamen Dashboard- und Layout-Styles.

@@ -71,26 +71,13 @@
   display: flex;
   flex-direction: column;
   gap: 7px;
+  margin-bottom: 0;
   color: #58675f;
   font-size: 12px;
   font-weight: 650;
 }
 
-.event-form input,
-.event-form select,
 .event-form textarea {
-  width: 100%;
-  min-height: 42px;
-  padding: 9px 11px;
-  border: 1px solid #dfe5df;
-  border-radius: 7px;
-  background: #fff;
-  color: #34423a;
-  font: 12px 'Manrope', sans-serif;
-}
-
-.event-form textarea {
-  min-height: 100px;
   resize: vertical;
 }
 
@@ -139,7 +126,8 @@
   background: #fff;
   color: #405048;
   cursor: pointer;
-  font: 11px 'Manrope', sans-serif;
+  font-family: inherit;
+  font-size: 11px;
   text-align: left;
 }
 
@@ -163,18 +151,6 @@
   font-size: 10px;
   font-weight: 400;
   line-height: 1.5;
-}
-
-.event-form input::placeholder,
-.event-form textarea::placeholder {
-  color: #929f97;
-}
-
-.event-form input:focus,
-.event-form select:focus,
-.event-form textarea:focus {
-  border-color: #39836e;
-  outline: 3px solid #39836e24;
 }
 
 .form-row {

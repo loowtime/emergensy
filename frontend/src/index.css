@@ -1,20 +1,31 @@
 :root {
-  font-family: 'Manrope', sans-serif;
-  color: #25352d;
-  background: #f4f6f3;
+  font-family: 'Inter Variable', Inter, system-ui, sans-serif;
+  color: #202b36;
+  background: #f3f5f7;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-optical-sizing: auto;
   font-weight: 400;
-  --ink: #25352d;
-  --muted: #78877e;
-  --line: #e4e9e4;
+  --ink: #202b36;
+  --muted: #667382;
+  --line: #d9e0e6;
   --surface: #fff;
-  --accent: #cf6048;
-  --green: #2f795f;
-  --mono: 'DM Mono', monospace;
+  --canvas: #f3f5f7;
+  --accent: #245b7a;
+  --accent-soft: #e8eff4;
+  --green: #426d5d;
+  --danger: #a64b45;
+  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --bs-font-sans-serif: 'Inter Variable', Inter, system-ui, sans-serif;
+  --bs-body-font-family: var(--bs-font-sans-serif);
+  --bs-body-color: var(--ink);
+  --bs-body-bg: var(--canvas);
+  --bs-primary-hue: 202;
+  --bs-primary-saturation: 54%;
+  --bs-navy-hue: 202;
+  --bs-navy-saturation: 54%;
+  --bs-border-color: var(--line);
 }
 
 * {
@@ -30,7 +41,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background: #f4f6f3;
+  font-family: var(--bs-body-font-family);
+  background: var(--canvas);
 }
 
 button,
@@ -45,7 +57,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid #31836e;
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 
@@ -54,6 +66,6 @@ textarea:focus-visible {
 }
 
 ::selection {
-  background: #2f795f;
+  background: var(--accent);
   color: #fff;
 }

@@ -91,18 +91,18 @@ export function EventCreateDialog({ token, onClose, onCreated, onSessionExpired 
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className="event-modal" role="dialog" aria-modal="true" aria-labelledby="event-modal-title">
-        <div className="modal-heading">
+      <section className="event-modal card" role="dialog" aria-modal="true" aria-labelledby="event-modal-title">
+        <div className="modal-heading card-header">
           <div><span className="modal-kicker">NEUER VORGANG</span><h2 id="event-modal-title">Ereignis erstellen</h2></div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="Dialog schließen"><X size={18} /></button>
         </div>
         <form className="event-form" onSubmit={(submitEvent) => void handleSubmit(submitEvent)}>
-          <label>Titel<input autoFocus required minLength={3} maxLength={120} value={draft.title} onChange={(change) => setDraft({ ...draft, title: change.target.value })} placeholder="Kurz und eindeutig" /></label>
+          <label className="form-label">Titel<input className="form-control" autoFocus required minLength={3} maxLength={120} value={draft.title} onChange={(change) => setDraft({ ...draft, title: change.target.value })} placeholder="Kurz und eindeutig" /></label>
           <div className="form-row">
-            <label>Kategorie<select value={draft.category} onChange={(change) => setDraft({ ...draft, category: change.target.value as EventDraft['category'] })}><option>Brand</option><option>Verkehr</option><option>Infrastruktur</option><option>Wetter</option><option>Sonstiges</option></select></label>
-            <label>Priorität<select value={draft.severity} onChange={(change) => setDraft({ ...draft, severity: change.target.value as EventDraft['severity'] })}><option value="critical">Kritisch</option><option value="warning">Erhöht</option><option value="info">Niedrig</option></select></label>
+            <label className="form-label">Kategorie<select className="form-select" value={draft.category} onChange={(change) => setDraft({ ...draft, category: change.target.value as EventDraft['category'] })}><option>Brand</option><option>Verkehr</option><option>Infrastruktur</option><option>Wetter</option><option>Sonstiges</option></select></label>
+            <label className="form-label">Priorität<select className="form-select" value={draft.severity} onChange={(change) => setDraft({ ...draft, severity: change.target.value as EventDraft['severity'] })}><option value="critical">Kritisch</option><option value="warning">Erhöht</option><option value="info">Niedrig</option></select></label>
           </div>
-          <label>Einsatzadresse
+          <label className="form-label">Einsatzadresse
             <div className="address-autocomplete">
               <input
                 autoComplete="street-address"
@@ -114,6 +114,7 @@ export function EventCreateDialog({ token, onClose, onCreated, onSessionExpired 
                 required
                 minLength={5}
                 maxLength={240}
+                className="form-control"
                 value={addressQuery}
                 onChange={(change) => {
                   const value = change.target.value
@@ -141,12 +142,12 @@ export function EventCreateDialog({ token, onClose, onCreated, onSessionExpired 
             </div>
             <span className="address-attribution">{searchError || (draft.latitude !== null && draft.longitude !== null ? 'Kartenstandort ausgewählt' : 'Straße und Hausnummer können gemeinsam eingegeben werden; passenden Treffer auswählen')} · Suchtext wird an Photon übermittelt</span>
           </label>
-          <label>Beschreibung<textarea required minLength={5} maxLength={1200} rows={4} value={draft.description} onChange={(change) => setDraft({ ...draft, description: change.target.value })} placeholder="Was ist passiert? Welche Auswirkungen sind bekannt?" /></label>
-          <label>Verantwortlich<input required minLength={2} maxLength={80} value={draft.owner} onChange={(change) => setDraft({ ...draft, owner: change.target.value })} /></label>
-          {formError && <p className="form-error" role="alert">{formError}</p>}
+          <label className="form-label">Beschreibung<textarea className="form-control" required minLength={5} maxLength={1200} rows={4} value={draft.description} onChange={(change) => setDraft({ ...draft, description: change.target.value })} placeholder="Was ist passiert? Welche Auswirkungen sind bekannt?" /></label>
+          <label className="form-label">Verantwortlich<input className="form-control" required minLength={2} maxLength={80} value={draft.owner} onChange={(change) => setDraft({ ...draft, owner: change.target.value })} /></label>
+          {formError && <p className="form-error alert alert-danger" role="alert">{formError}</p>}
           <div className="modal-actions">
-            <button type="button" className="refresh-button" onClick={onClose}>Abbrechen</button>
-            <button type="submit" className="create-event-button" disabled={isSaving || draft.latitude === null || draft.longitude === null}>
+            <button type="button" className="refresh-button btn btn-outline-secondary" onClick={onClose}>Abbrechen</button>
+            <button type="submit" className="create-event-button btn btn-primary" disabled={isSaving || draft.latitude === null || draft.longitude === null}>
               <Plus size={15} />{isSaving ? 'Wird gespeichert…' : 'Ereignis speichern'}
             </button>
           </div>
