@@ -136,6 +136,28 @@ def initialize_database():
             "CREATE INDEX IF NOT EXISTS idx_staff_protocol_revisions_protocol "
             "ON staff_protocol_revisions(protocol_id, revision DESC)"
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS operation_commands (
+                event_id INTEGER PRIMARY KEY,
+                revision INTEGER NOT NULL,
+                document_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS operation_command_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                revision INTEGER NOT NULL,
+                document_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(event_id, revision)
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_operation_command_revisions_event "
+            "ON operation_command_revisions(event_id, revision DESC)"
+        )
         connection.commit()
 
 
@@ -175,6 +197,117 @@ class EventCreate(BaseModel):
 
 class EventStatusUpdate(BaseModel):
     status: Literal["open", "monitoring", "resolved"]
+
+
+OperationPhase = Literal["situation", "planning", "command", "control"]
+CommandStaffCode = Literal["S1", "S2", "S3", "S4", "S5", "S6"]
+
+
+def default_command_phase_notes() -> dict[str, str]:
+    return {phase: "" for phase in ("situation", "planning", "command", "control")}
+
+
+def default_command_staff_positions() -> list[dict[str, str]]:
+    return [
+        {"code": "S1", "owner": "", "status": "unassigned", "focus": ""},
+        {"code": "S2", "owner": "", "status": "unassigned", "focus": ""},
+        {"code": "S3", "owner": "", "status": "unassigned", "focus": ""},
+        {"code": "S4", "owner": "", "status": "unassigned", "focus": ""},
+        {"code": "S5", "owner": "", "status": "unassigned", "focus": ""},
+        {"code": "S6", "owner": "", "status": "unassigned", "focus": ""},
+    ]
+
+
+class OperationCommandInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class OperationStaffPosition(OperationCommandInput):
+    code: CommandStaffCode
+    owner: str = Field(default="", max_length=120)
+    status: Literal["unassigned", "active", "support_needed"] = "unassigned"
+    focus: str = Field(default="", max_length=500)
+
+
+class OperationOrder(OperationCommandInput):
+    id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
+    task: str = Field(min_length=3, max_length=1000)
+    recipient: str = Field(min_length=2, max_length=160)
+    resources: str = Field(default="", max_length=500)
+    reporting_point: str = Field(default="", max_length=500)
+    due_at: datetime | None = None
+    status: Literal["open", "in_progress", "completed", "blocked"] = "open"
+    feedback_required: bool = True
+
+
+class OperationReport(OperationCommandInput):
+    id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
+    source: str = Field(min_length=2, max_length=160)
+    content: str = Field(min_length=3, max_length=1200)
+    confidence: Literal["unverified", "verified"] = "unverified"
+    reported_at: datetime
+
+
+class OperationAdvisor(OperationCommandInput):
+    id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
+    organization: str = Field(min_length=2, max_length=160)
+    contact_person: str = Field(default="", max_length=120)
+    focus: str = Field(default="", max_length=500)
+    status: Literal["requested", "connected", "not_required"] = "requested"
+
+
+class OperationCommandDocument(OperationCommandInput):
+    command_lead: str = Field(default="", max_length=120)
+    phase: OperationPhase = "situation"
+    situation_summary: str = Field(default="", max_length=3000)
+    mission: str = Field(default="", max_length=1000)
+    intent: str = Field(default="", max_length=1500)
+    next_review_at: datetime | None = None
+    phase_notes: dict[OperationPhase, str] = Field(default_factory=default_command_phase_notes)
+    staff_positions: list[OperationStaffPosition] = Field(
+        default_factory=default_command_staff_positions, min_length=6, max_length=6
+    )
+    advisors: list[OperationAdvisor] = Field(default_factory=list, max_length=40)
+    orders: list[OperationOrder] = Field(default_factory=list, max_length=100)
+    reports: list[OperationReport] = Field(default_factory=list, max_length=200)
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_legacy_defaults(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        normalized = value.copy()
+        default_document = {
+            "phase_notes": default_command_phase_notes(),
+            "staff_positions": default_command_staff_positions(),
+            "advisors": [],
+        }
+        for field_name, default in default_document.items():
+            if field_name not in normalized:
+                normalized[field_name] = default
+            elif field_name == "phase_notes" and isinstance(normalized[field_name], dict):
+                normalized[field_name] = {
+                    **default,
+                    **normalized[field_name],
+                }
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_unique_operations(self):
+        codes = [position.code for position in self.staff_positions]
+        if len(codes) != len(set(codes)):
+            raise ValueError("Jede Führungsfunktion darf nur einmal zugeordnet sein")
+        if len(codes) != 6 or set(codes) != {"S1", "S2", "S3", "S4", "S5", "S6"}:
+            raise ValueError("Die Führungsfunktionen S1 bis S6 müssen vollständig enthalten sein")
+        identifiers = [item.id for item in (*self.advisors, *self.orders, *self.reports)]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("IDs für Kontakte, Aufträge und Meldungen müssen eindeutig sein")
+        return self
+
+
+class OperationCommandUpdate(OperationCommandInput):
+    expected_revision: int = Field(ge=0)
+    document: OperationCommandDocument
 
 
 class AdminLogin(BaseModel):
@@ -782,6 +915,103 @@ def list_staff_protocol_revisions(
             ).model_dump(mode="json"),
             "created_at": row["created_at"],
         }
+        for row in rows
+    ]
+
+
+def serialize_operation_command(event_id: int, revision: int, document: dict, updated_at: str | None) -> dict:
+    validated = OperationCommandDocument.model_validate(document)
+    return {
+        "event_id": event_id,
+        "revision": revision,
+        "document": validated.model_dump(mode="json"),
+        "updated_at": updated_at,
+    }
+
+
+@app.get("/api/operations/{event_id}/command")
+def get_operation_command(event_id: int, _: str = Depends(require_admin)):
+    with closing(get_connection()) as connection:
+        event = connection.execute("SELECT 1 FROM events WHERE id = ?", (event_id,)).fetchone()
+        if event is None:
+            raise HTTPException(status_code=404, detail="Ereignis nicht gefunden")
+        row = connection.execute(
+            "SELECT revision, document_json, updated_at FROM operation_commands WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+    if row is None:
+        document = OperationCommandDocument()
+        return serialize_operation_command(event_id, 0, document.model_dump(mode="json"), None)
+    return serialize_operation_command(
+        event_id, row["revision"], json.loads(row["document_json"]), row["updated_at"]
+    )
+
+
+@app.put("/api/operations/{event_id}/command")
+def save_operation_command(
+    event_id: int,
+    update: OperationCommandUpdate,
+    _: str = Depends(require_admin),
+):
+    document_json = json.dumps(
+        update.document.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
+    )
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with closing(get_connection()) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        event = connection.execute("SELECT 1 FROM events WHERE id = ?", (event_id,)).fetchone()
+        if event is None:
+            connection.rollback()
+            raise HTTPException(status_code=404, detail="Ereignis nicht gefunden")
+        current = connection.execute(
+            "SELECT revision FROM operation_commands WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        current_revision = current["revision"] if current else 0
+        if current_revision != update.expected_revision:
+            connection.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Die Einsatzführung wurde zwischenzeitlich geändert. Bitte neu laden.",
+            )
+        revision = current_revision + 1
+        connection.execute(
+            """INSERT INTO operation_commands (event_id, revision, document_json, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(event_id) DO UPDATE SET
+                   revision = excluded.revision,
+                   document_json = excluded.document_json,
+                   updated_at = excluded.updated_at""",
+            (event_id, revision, document_json, timestamp),
+        )
+        connection.execute(
+            """INSERT INTO operation_command_revisions
+               (event_id, revision, document_json, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (event_id, revision, document_json, timestamp),
+        )
+        connection.commit()
+    return serialize_operation_command(
+        event_id, revision, json.loads(document_json), timestamp
+    )
+
+
+@app.get("/api/operations/{event_id}/command/revisions")
+def list_operation_command_revisions(event_id: int, _: str = Depends(require_admin)):
+    with closing(get_connection()) as connection:
+        event = connection.execute("SELECT 1 FROM events WHERE id = ?", (event_id,)).fetchone()
+        if event is None:
+            raise HTTPException(status_code=404, detail="Ereignis nicht gefunden")
+        rows = connection.execute(
+            """SELECT revision, document_json, created_at
+               FROM operation_command_revisions
+               WHERE event_id = ?
+               ORDER BY revision DESC LIMIT 100""",
+            (event_id,),
+        ).fetchall()
+    return [
+        serialize_operation_command(
+            event_id, row["revision"], json.loads(row["document_json"]), row["created_at"]
+        )
         for row in rows
     ]
 
