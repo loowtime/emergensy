@@ -1,5 +1,11 @@
 import type { StaffProtocolDocument, StaffProtocolRecord } from '../../types'
-import { getRiskLevel } from './riskScoring'
+import {
+  getGrossRiskLevel,
+  getRiskLevel,
+  RISK_CATEGORY_LABELS,
+  RISK_STATUS_LABELS,
+  RISK_TREATMENT_LABELS,
+} from './riskScoring'
 import { formatSituationTimestamp } from '../situation-log/presentation'
 
 const HTML_ESCAPE_MAP: Record<string, string> = {
@@ -33,13 +39,20 @@ function list<T>(items: T[], render: (item: T, index: number) => string): string
 
 function getPrintableSections(protocol: StaffProtocolDocument): string {
   const risks = list(protocol.risks, (risk) => {
-    const level = getRiskLevel(risk)
-    return `<tr>
-      <td><strong>${escapeHtml(risk.id)}</strong><br>${text(risk.title)}</td>
-      <td>${risk.probability}/5</td><td>${risk.impact}/5</td>
-      <td><span class="risk ${level.className}">${level.label} · ${level.score}/25</span></td>
-      <td>${text(risk.response_plan)}</td>
-    </tr>`
+    const gross = getGrossRiskLevel(risk)
+    const residual = getRiskLevel(risk)
+    return `<article class="risk-entry">
+      <div class="risk-entry-heading">
+        <div><strong>${escapeHtml(risk.id)} · ${text(risk.title)}</strong><br><span>${RISK_CATEGORY_LABELS[risk.category]} · ${RISK_STATUS_LABELS[risk.status]}</span></div>
+        <span>Owner: ${text(risk.owner)}</span>
+      </div>
+      <p><strong>Brutto:</strong> E ${risk.probability}/5 × A ${risk.impact}/5 · <span class="risk ${gross.className}">${gross.label} ${gross.score}/25</span>
+      &nbsp; <strong>Rest:</strong> E ${risk.residual_probability}/5 × A ${risk.residual_impact}/5 · <span class="risk ${residual.className}">${residual.label} ${residual.score}/25</span></p>
+      <p><strong>Strategie:</strong> ${RISK_TREATMENT_LABELS[risk.treatment]} · <strong>Nächster Review:</strong> ${risk.review_date ? formatDate(risk.review_date) : '—'}</p>
+      <p><strong>Frühindikator:</strong> ${text(risk.trigger)}<br><strong>Bestehende Kontrollen:</strong> ${text(risk.existing_controls)}</p>
+      <p><strong>Gegenmaßnahme:</strong> ${text(risk.response_plan)}<br><strong>Evidenz / Annahmen:</strong> ${text(risk.evidence)}</p>
+      ${risk.status === 'accepted' ? `<p><strong>Akzeptiert durch:</strong> ${text(risk.accepted_by)} · <strong>Begründung:</strong> ${text(risk.acceptance_rationale)}</p>` : ''}
+    </article>`
   })
   const topics = list(protocol.topics, (topic, index) => `
     <article class="entry"><h3>${String(index + 1).padStart(2, '0')} · ${text(topic.title)}</h3>
@@ -58,7 +71,7 @@ function getPrintableSections(protocol: StaffProtocolDocument): string {
     <td>${text(point.owner)}</td><td>${point.follow_up_date ? formatDate(point.follow_up_date) : '—'}</td></tr>`)
   return [
     section('Aktuelle Lage', `<p class="narrative">${text(protocol.situation_summary)}</p>`),
-    section('Risikobewertung', `<table><thead><tr><th>Risiko-ID / Risiko</th><th>Eintritt</th><th>Auswirkung</th><th>Risikostufe</th><th>Vorsorge / Reaktion</th></tr></thead><tbody>${risks}</tbody></table>`),
+    section('Forschungsrisikoregister', risks),
     section('Besprochene Themen', topics),
     section('Entscheidungen', decisions),
     section('Maßnahmen', `<table><thead><tr><th>Aufgabe</th><th>Zuständig</th><th>Frist</th><th>Status</th><th>Beschluss</th></tr></thead><tbody>${measures}</tbody></table>`),
@@ -93,6 +106,11 @@ export function createPrintableStaffProtocol(record: StaffProtocolRecord): strin
     .narrative { white-space: pre-wrap; }
     .entry { padding: 12px 0; border-bottom: 1px solid #e5e9ec; }
     .entry:last-child { border-bottom: 0; }
+    .risk-entry { padding: 12px 0; border-bottom: 1px solid #dfe5e9; break-inside: avoid; }
+    .risk-entry:last-child { border-bottom: 0; }
+    .risk-entry-heading { display: flex; justify-content: space-between; gap: 12px; }
+    .risk-entry-heading > div > span { display: inline-block; margin-top: 4px; color: #647584; font-size: 10px; }
+    .risk-entry p { margin: 7px 0 0; }
     .entry-head { display: flex; justify-content: space-between; gap: 12px; }
     .entry-head span { color: #637382; }
     table { width: 100%; border-collapse: collapse; }
