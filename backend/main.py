@@ -10,7 +10,7 @@ from contextlib import closing
 from datetime import date, datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.error import URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request as URLRequest, urlopen
@@ -196,9 +196,50 @@ class StaffProtocolInput(BaseModel):
 class StaffProtocolRisk(StaffProtocolInput):
     id: str = Field(min_length=1, max_length=36, pattern=r"^[A-Za-z0-9_-]+$")
     title: str = Field(min_length=3, max_length=180)
+    category: Literal[
+        "methodology",
+        "data_quality",
+        "ethics",
+        "privacy",
+        "security",
+        "resources",
+        "timeline",
+        "dependencies",
+        "transfer",
+        "other",
+    ] = "other"
     probability: int = Field(ge=1, le=5)
     impact: int = Field(ge=1, le=5)
+    residual_probability: int = Field(ge=1, le=5)
+    residual_impact: int = Field(ge=1, le=5)
+    owner: str = Field(default="", max_length=120)
+    status: Literal["identified", "treating", "accepted", "closed"] = "identified"
+    treatment: Literal["reduce", "avoid", "share", "accept"] = "reduce"
+    existing_controls: str = Field(default="", max_length=1200)
     response_plan: str = Field(default="", max_length=1200)
+    trigger: str = Field(default="", max_length=500)
+    review_date: date | None = None
+    evidence: str = Field(default="", max_length=1200)
+    acceptance_rationale: str = Field(default="", max_length=1200)
+    accepted_by: str = Field(default="", max_length=120)
+
+    @model_validator(mode="before")
+    @classmethod
+    def preserve_legacy_scores(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = value.copy()
+            value.setdefault("residual_probability", value.get("probability", 3))
+            value.setdefault("residual_impact", value.get("impact", 3))
+        return value
+
+    @model_validator(mode="after")
+    def validate_acceptance(self):
+        if self.status == "accepted":
+            if self.treatment != "accept":
+                raise ValueError("Akzeptierte Risiken benötigen die Behandlungsstrategie 'accept'")
+            if not self.accepted_by.strip() or not self.acceptance_rationale.strip():
+                raise ValueError("Akzeptierte Risiken benötigen Begründung und freigebende Person")
+        return self
 
 
 class StaffProtocolTopic(StaffProtocolInput):
@@ -587,10 +628,11 @@ def create_situation_log_entry(entry: SituationLogCreate, _: str = Depends(requi
 
 
 def serialize_staff_protocol(row: sqlite3.Row) -> dict:
+    protocol = StaffProtocolDocument.model_validate(json.loads(row["protocol_json"]))
     return {
         "id": row["id"],
         "revision": row["revision"],
-        "protocol": json.loads(row["protocol_json"]),
+        "protocol": protocol.model_dump(mode="json"),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -735,7 +777,9 @@ def list_staff_protocol_revisions(
         {
             "revision": row["revision"],
             "changed_by": row["changed_by"],
-            "protocol": json.loads(row["snapshot_json"]),
+            "protocol": StaffProtocolDocument.model_validate(
+                json.loads(row["snapshot_json"])
+            ).model_dump(mode="json"),
             "created_at": row["created_at"],
         }
         for row in rows

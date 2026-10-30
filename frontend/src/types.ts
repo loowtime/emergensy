@@ -43,12 +43,37 @@ export type SituationReport = {
   total: number
   entries: SituationLogEntry[]
 }
+export type StaffProtocolRiskCategory =
+  | 'methodology'
+  | 'data_quality'
+  | 'ethics'
+  | 'privacy'
+  | 'security'
+  | 'resources'
+  | 'timeline'
+  | 'dependencies'
+  | 'transfer'
+  | 'other'
+export type StaffProtocolRiskStatus = 'identified' | 'treating' | 'accepted' | 'closed'
+export type StaffProtocolRiskTreatment = 'reduce' | 'avoid' | 'share' | 'accept'
 export type StaffProtocolRisk = {
   id: string
   title: string
+  category: StaffProtocolRiskCategory
   probability: number
   impact: number
+  residual_probability: number
+  residual_impact: number
+  owner: string
+  status: StaffProtocolRiskStatus
+  treatment: StaffProtocolRiskTreatment
+  existing_controls: string
   response_plan: string
+  trigger: string
+  review_date: string | null
+  evidence: string
+  acceptance_rationale: string
+  accepted_by: string
 }
 export type StaffProtocolTopic = {
   id: string
