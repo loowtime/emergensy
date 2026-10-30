@@ -287,9 +287,18 @@ def is_loopback_host(host: str | None) -> bool:
     if not host:
         return False
     try:
-        hostname = urlsplit(f"//{host}").hostname
+        parsed_host = urlsplit(f"//{host}")
     except ValueError:
         return False
+    if (
+        parsed_host.username
+        or parsed_host.password
+        or parsed_host.path
+        or parsed_host.query
+        or parsed_host.fragment
+    ):
+        return False
+    hostname = parsed_host.hostname
     if not hostname:
         return False
     if hostname.casefold() == "localhost":
@@ -313,6 +322,11 @@ def require_local_client(request: Request):
             parsed_origin = urlsplit(origin)
             origin_is_local = (
                 parsed_origin.scheme in {"http", "https"}
+                and not parsed_origin.username
+                and not parsed_origin.password
+                and not parsed_origin.path
+                and not parsed_origin.query
+                and not parsed_origin.fragment
                 and is_loopback_host(parsed_origin.netloc)
             )
         except ValueError:
