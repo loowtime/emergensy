@@ -33,10 +33,20 @@ import type {
   StaffProtocolRecord,
   StaffProtocolRevision,
   StaffProtocolRisk,
+  StaffProtocolRiskCategory,
+  StaffProtocolRiskStatus,
+  StaffProtocolRiskTreatment,
   StaffProtocolTopic,
 } from '../../types'
 import { createPrintableStaffProtocol } from './printableStaffProtocol'
-import { getRiskLevel } from './riskScoring'
+import {
+  getGrossRiskLevel,
+  getRiskLevel,
+  getRiskLevelForScore,
+  RISK_CATEGORY_LABELS,
+  RISK_STATUS_LABELS,
+  RISK_TREATMENT_LABELS,
+} from './riskScoring'
 import { formatSituationTimestamp } from '../situation-log/presentation'
 import './StaffProtocolPage.css'
 
@@ -168,6 +178,37 @@ function SectionHeading({ number, title, description, action }: {
   )
 }
 
+function RiskMatrix({ risks, residual }: { risks: StaffProtocolRisk[]; residual: boolean }) {
+  const matrixRisks = risks.filter((risk) => risk.status !== 'closed')
+  return (
+    <div className="risk-matrix" role="group" aria-label={residual ? 'Restrisiko-Matrix' : 'Bruttorisiko-Matrix'}>
+      <strong>{residual ? 'Restrisiko' : 'Bruttorisiko'}</strong>
+      <span className="risk-matrix-axis">Eintritt ↑ · Auswirkung →</span>
+      <div className="risk-matrix-grid">
+        {[5, 4, 3, 2, 1].flatMap((impact) =>
+          [1, 2, 3, 4, 5].map((probability) => {
+            const score = probability * impact
+            const count = matrixRisks.filter((risk) =>
+              (residual ? risk.residual_probability : risk.probability) === probability
+              && (residual ? risk.residual_impact : risk.impact) === impact,
+            ).length
+            const level = getRiskLevelForScore(score)
+            return (
+              <span
+                key={`${probability}-${impact}`}
+                className={`risk-matrix-cell risk-matrix-cell--${level.className}`}
+                title={`Eintritt ${probability}, Auswirkung ${impact}: ${count} Risiko${count === 1 ? '' : 's'}`}
+                aria-label={`Eintritt ${probability}, Auswirkung ${impact}: ${count} Risiken`}
+              >{count || ''}</span>
+            )
+          }),
+        )}
+      </div>
+      <span className="risk-matrix-footnote">{matrixRisks.length} aktive Risiken</span>
+    </div>
+  )
+}
+
 export function StaffProtocolPage({ token, onSessionExpired, onNotice }: Props) {
   const [records, setRecords] = useState<StaffProtocolRecord[]>([])
   const [total, setTotal] = useState(0)
@@ -244,6 +285,10 @@ export function StaffProtocolPage({ token, onSessionExpired, onNotice }: Props) 
 
   const activeRevision = revisions.find((item) => item.revision === selectedRevision) ?? null
   const highRiskCount = draft.risks.filter((risk) => getRiskLevel(risk).score >= 10).length
+  const today = localDateTime().date
+  const reviewDueCount = draft.risks.filter((risk) =>
+    risk.status !== 'closed' && risk.review_date && risk.review_date <= today,
+  ).length
   const openMeasureCount = draft.measures.filter((measure) => measure.status !== 'completed').length
   const openPointCount = draft.open_points.length
 
@@ -407,9 +452,21 @@ export function StaffProtocolPage({ token, onSessionExpired, onNotice }: Props) 
     const risk: StaffProtocolRisk = {
       id: createItemId('R'),
       title: '',
+      category: 'other',
       probability: 3,
       impact: 3,
+      residual_probability: 3,
+      residual_impact: 3,
+      owner: '',
+      status: 'identified',
+      treatment: 'reduce',
+      existing_controls: '',
       response_plan: '',
+      trigger: '',
+      review_date: null,
+      evidence: '',
+      acceptance_rationale: '',
+      accepted_by: '',
     }
     updateDraft('risks', [...draft.risks, risk])
   }
@@ -489,7 +546,12 @@ export function StaffProtocolPage({ token, onSessionExpired, onNotice }: Props) 
         <article className="protocol-kpi datagrid-item">
           <span className="protocol-kpi-label"><IconAlertTriangle size={15} /> Hohe Risiken</span>
           <strong>{highRiskCount}</strong>
-          <small>hoch oder kritisch bewertet</small>
+          <small>nach Gegenmaßnahmen verbleibend</small>
+        </article>
+        <article className="protocol-kpi datagrid-item">
+          <span className="protocol-kpi-label"><IconCalendarEvent size={15} /> Review fällig</span>
+          <strong>{reviewDueCount}</strong>
+          <small>Risiken mit Prüftermin erreicht</small>
         </article>
         <article className="protocol-kpi datagrid-item">
           <span className="protocol-kpi-label"><IconClipboardCheck size={15} /> Offene Maßnahmen</span>
@@ -646,36 +708,128 @@ export function StaffProtocolPage({ token, onSessionExpired, onNotice }: Props) 
             <div className="card-header">
               <SectionHeading
                 number="03"
-                title="Risikobewertung"
-                description="Eintritt × Auswirkung; Stufe wird transparent aus der 5×5-Matrix berechnet"
+                title="Forschungsrisikoregister"
+                description="Brutto- und Restrisiko, Verantwortlichkeit, Frühindikatoren und überprüfbare Behandlung"
                 action={isEditing && <button className="btn btn-outline-secondary btn-sm" type="button" onClick={addRisk}><IconPlus size={15} /> Risiko</button>}
               />
             </div>
-            <div className="table-responsive protocol-table-wrap">
-              <table className="table table-vcenter protocol-table">
-                <thead><tr><th>Risiko-ID / Risiko</th><th>Eintritt (1–5)</th><th>Auswirkung (1–5)</th><th>Stufe</th><th>Vorsorge / Reaktion</th>{isEditing && <th aria-label="Aktionen" />}</tr></thead>
-                <tbody>
-                  {draft.risks.map((risk) => {
-                    const level = getRiskLevel(risk)
-                    return (
-                      <tr key={risk.id}>
-                        <td><span className="protocol-item-id">{risk.id}</span><input className="form-control form-control-sm" value={risk.title} required disabled={disabled} maxLength={180} placeholder="Risiko beschreiben" onChange={(event) => patchRisk(risk.id, { title: event.target.value })} /></td>
-                        <td><select className="form-select form-select-sm" value={risk.probability} disabled={disabled} aria-label={`Eintrittswahrscheinlichkeit ${risk.id}`} onChange={(event) => patchRisk(risk.id, { probability: Number(event.target.value) })}>{[1, 2, 3, 4, 5].map((score) => <option key={score} value={score}>{score} · {['Sehr gering', 'Gering', 'Mittel', 'Hoch', 'Sehr hoch'][score - 1]}</option>)}</select></td>
-                        <td><select className="form-select form-select-sm" value={risk.impact} disabled={disabled} aria-label={`Schadensausmaß ${risk.id}`} onChange={(event) => patchRisk(risk.id, { impact: Number(event.target.value) })}>{[1, 2, 3, 4, 5].map((score) => <option key={score} value={score}>{score} · {['Gering', 'Begrenzt', 'Erheblich', 'Schwer', 'Existenzbedrohend'][score - 1]}</option>)}</select></td>
-                        <td><span className={`risk-level risk-level--${level.className}`}><i />{level.label}<small>{level.score}/25</small></span></td>
-                        <td><input className="form-control form-control-sm" value={risk.response_plan} disabled={disabled} maxLength={1200} placeholder="Vorsorge oder Reaktion" onChange={(event) => patchRisk(risk.id, { response_plan: event.target.value })} /></td>
-                        {isEditing && <td><button className="btn btn-outline-secondary btn-sm protocol-remove-button" type="button" aria-label={`${risk.id} entfernen`} onClick={() => {
-                          updateDraft('risks', draft.risks.filter((item) => item.id !== risk.id))
-                          updateDraft('decisions', draft.decisions.map((decision) => decision.risk_id === risk.id ? { ...decision, risk_id: null } : decision))
-                        }}><IconTrash size={15} /></button></td>}
-                      </tr>
-                    )
-                  })}
-                  {draft.risks.length === 0 && <tr><td colSpan={isEditing ? 6 : 5} className="protocol-table-empty">Noch keine Risiken bewertet.</td></tr>}
-                </tbody>
-              </table>
+            <div className="risk-matrices">
+              <RiskMatrix risks={draft.risks} residual={false} />
+              <RiskMatrix risks={draft.risks} residual />
             </div>
-            <div className="risk-matrix-note"><IconAlertTriangle size={14} /> Bewertungsmatrix: 1–4 niedrig · 5–9 beobachten · 10–15 hoch · 16–25 kritisch</div>
+            <div className="risk-matrix-note"><IconAlertTriangle size={14} /> Eintritt × Auswirkung · 1–4 niedrig · 5–9 beobachten · 10–15 hoch · 16–25 kritisch. Die Matrix zeigt aktive Risiken; die Priorität richtet sich nach dem Restrisiko.</div>
+            <div className="card-body protocol-section-body risk-register-list">
+              {draft.risks.map((risk) => {
+                const gross = getGrossRiskLevel(risk)
+                const residual = getRiskLevel(risk)
+                const riskIsOverdue = risk.status !== 'closed' && Boolean(risk.review_date && risk.review_date <= today)
+                return (
+                  <article className={`risk-register-card${risk.status === 'closed' ? ' risk-register-card--closed' : ''}`} key={risk.id}>
+                    <div className="risk-register-heading">
+                      <div className="risk-register-identity">
+                        <span className="protocol-item-id">{risk.id}</span>
+                        <InputField label="Risiko / Ursache / Auswirkung" value={risk.title} disabled={disabled} required maxLength={180} placeholder="z. B. Selektionsbias durch geringe Rücklaufquote" onChange={(value) => patchRisk(risk.id, { title: value })} />
+                      </div>
+                      <div className="risk-register-selects">
+                        <label className="form-label protocol-field">Forschungsdimension
+                          <select className="form-select form-select-sm" value={risk.category} disabled={disabled} onChange={(event) => patchRisk(risk.id, { category: event.target.value as StaffProtocolRiskCategory })}>
+                            {Object.entries(RISK_CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                        </label>
+                        <label className="form-label protocol-field">Bearbeitungsstatus
+                          <select className="form-select form-select-sm" value={risk.status} disabled={disabled} onChange={(event) => {
+                            const status = event.target.value as StaffProtocolRiskStatus
+                            patchRisk(risk.id, {
+                              status,
+                              ...(status === 'accepted'
+                                ? { treatment: 'accept' }
+                                : risk.treatment === 'accept' ? { treatment: 'reduce' } : {}),
+                            })
+                          }}>
+                            {Object.entries(RISK_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                      {isEditing && <button className="btn btn-outline-secondary btn-sm protocol-remove-button risk-register-remove" type="button" aria-label={`${risk.id} entfernen`} onClick={() => {
+                        updateDraft('risks', draft.risks.filter((item) => item.id !== risk.id))
+                        updateDraft('decisions', draft.decisions.map((decision) => decision.risk_id === risk.id ? { ...decision, risk_id: null } : decision))
+                      }}><IconTrash size={15} /></button>}
+                    </div>
+
+                    <div className="risk-score-comparison">
+                      <fieldset className="risk-score-group">
+                        <legend>Bruttorisiko · vor Maßnahmen</legend>
+                        <label className="form-label protocol-field">Eintritt
+                          <select className="form-select form-select-sm" value={risk.probability} disabled={disabled} aria-label={`Brutto Eintritt ${risk.id}`} onChange={(event) => patchRisk(risk.id, { probability: Number(event.target.value) })}>
+                            {[1, 2, 3, 4, 5].map((score) => <option key={score} value={score}>{score} · {['Sehr gering', 'Gering', 'Mittel', 'Hoch', 'Sehr hoch'][score - 1]}</option>)}
+                          </select>
+                        </label>
+                        <label className="form-label protocol-field">Auswirkung
+                          <select className="form-select form-select-sm" value={risk.impact} disabled={disabled} aria-label={`Brutto Auswirkung ${risk.id}`} onChange={(event) => patchRisk(risk.id, { impact: Number(event.target.value) })}>
+                            {[1, 2, 3, 4, 5].map((score) => <option key={score} value={score}>{score} · {['Gering', 'Begrenzt', 'Erheblich', 'Schwer', 'Existenzbedrohend'][score - 1]}</option>)}
+                          </select>
+                        </label>
+                        <span className={`risk-level risk-level--${gross.className}`}><i />{gross.label}<small>{gross.score}/25</small></span>
+                      </fieldset>
+                      <fieldset className="risk-score-group risk-score-group--residual">
+                        <legend>Restrisiko · nach Maßnahmen</legend>
+                        <label className="form-label protocol-field">Eintritt
+                          <select className="form-select form-select-sm" value={risk.residual_probability} disabled={disabled} aria-label={`Rest Eintritt ${risk.id}`} onChange={(event) => patchRisk(risk.id, { residual_probability: Number(event.target.value) })}>
+                            {[1, 2, 3, 4, 5].map((score) => <option key={score} value={score}>{score} · {['Sehr gering', 'Gering', 'Mittel', 'Hoch', 'Sehr hoch'][score - 1]}</option>)}
+                          </select>
+                        </label>
+                        <label className="form-label protocol-field">Auswirkung
+                          <select className="form-select form-select-sm" value={risk.residual_impact} disabled={disabled} aria-label={`Rest Auswirkung ${risk.id}`} onChange={(event) => patchRisk(risk.id, { residual_impact: Number(event.target.value) })}>
+                            {[1, 2, 3, 4, 5].map((score) => <option key={score} value={score}>{score} · {['Gering', 'Begrenzt', 'Erheblich', 'Schwer', 'Existenzbedrohend'][score - 1]}</option>)}
+                          </select>
+                        </label>
+                        <span className={`risk-level risk-level--${residual.className}`}><i />{residual.label}<small>{residual.score}/25</small></span>
+                      </fieldset>
+                    </div>
+
+                    <div className="protocol-fields-grid risk-register-meta">
+                      <InputField label="Risiko-Owner" value={risk.owner} disabled={disabled} maxLength={120} placeholder="Person mit Steuerungsverantwortung" onChange={(value) => patchRisk(risk.id, { owner: value })} />
+                      <label className="form-label protocol-field">Behandlungsstrategie
+                        <select className="form-select form-select-sm" value={risk.treatment} disabled={disabled} onChange={(event) => {
+                          const treatment = event.target.value as StaffProtocolRiskTreatment
+                          patchRisk(risk.id, {
+                            treatment,
+                            ...(treatment === 'accept'
+                              ? { status: 'accepted' }
+                              : risk.status === 'accepted' ? { status: 'treating' } : {}),
+                          })
+                        }}>
+                          {Object.entries(RISK_TREATMENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                      </label>
+                      <InputField label="Nächster Review" type="date" value={risk.review_date ?? ''} disabled={disabled} onChange={(value) => patchRisk(risk.id, { review_date: value || null })} />
+                      {riskIsOverdue && <span className="risk-review-due" role="status"><IconAlertTriangle size={14} /> Review fällig</span>}
+                      <div className="protocol-field protocol-field--wide">
+                        <TextareaField label="Frühindikator / Auslöser" value={risk.trigger} disabled={disabled} maxLength={500} rows={2} placeholder="Messbarer Trigger, Schwellenwert oder Signal für eine Neubewertung" onChange={(value) => patchRisk(risk.id, { trigger: value })} />
+                      </div>
+                      <div className="protocol-field protocol-field--wide">
+                        <TextareaField label="Bestehende Kontrollen" value={risk.existing_controls} disabled={disabled} maxLength={1200} rows={2} placeholder="Welche Kontrollen oder Evidenz liegen bereits vor?" onChange={(value) => patchRisk(risk.id, { existing_controls: value })} />
+                      </div>
+                      <div className="protocol-field protocol-field--wide">
+                        <TextareaField label="Behandlung / konkrete Gegenmaßnahme" value={risk.response_plan} disabled={disabled} maxLength={1200} rows={2} placeholder="Konkrete Schritte, Verantwortliche und erwartete Wirkung auf das Restrisiko" onChange={(value) => patchRisk(risk.id, { response_plan: value })} />
+                      </div>
+                      <div className="protocol-field protocol-field--wide">
+                        <TextareaField label="Evidenz, Annahmen und Unsicherheit" value={risk.evidence} disabled={disabled} maxLength={1200} rows={2} placeholder="Beobachtung, Datenquelle oder Annahme; Unsicherheit ausdrücklich benennen" onChange={(value) => patchRisk(risk.id, { evidence: value })} />
+                      </div>
+                      {risk.status === 'accepted' && (
+                        <>
+                          <InputField label="Risikoakzeptanz freigegeben durch" value={risk.accepted_by} disabled={disabled} required maxLength={120} onChange={(value) => patchRisk(risk.id, { accepted_by: value })} />
+                          <div className="protocol-field protocol-field--wide">
+                            <TextareaField label="Begründung der Risikoakzeptanz" value={risk.acceptance_rationale} disabled={disabled} required maxLength={1200} rows={2} onChange={(value) => patchRisk(risk.id, { acceptance_rationale: value })} />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </article>
+                )
+              })}
+              {draft.risks.length === 0 && <div className="protocol-inline-empty">Noch keine Forschungsrisiken erfasst. Kategorien unterstützen unter anderem Validität, Datenqualität, Ethik, Datenschutz und Reproduzierbarkeit.</div>}
+            </div>
           </section>
 
           <section className="protocol-section card">
