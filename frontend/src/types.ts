@@ -135,6 +135,59 @@ export type StaffProtocolPage = {
   offset: number
   limit: number
 }
+export type OperationPhase = 'situation' | 'planning' | 'command' | 'control'
+export type CommandStaffCode = 'S1' | 'S2' | 'S3' | 'S4' | 'S5' | 'S6'
+export type CommandStaffStatus = 'unassigned' | 'active' | 'support_needed'
+export type OperationOrderStatus = 'open' | 'in_progress' | 'completed' | 'blocked'
+export type OperationOrder = {
+  id: string
+  task: string
+  recipient: string
+  resources: string
+  reporting_point: string
+  due_at: string | null
+  status: OperationOrderStatus
+  feedback_required: boolean
+}
+export type OperationStaffPosition = {
+  code: CommandStaffCode
+  owner: string
+  status: CommandStaffStatus
+  focus: string
+}
+export type OperationReport = {
+  id: string
+  source: string
+  content: string
+  confidence: 'unverified' | 'verified'
+  reported_at: string
+}
+export type OperationAdvisor = {
+  id: string
+  organization: string
+  contact_person: string
+  focus: string
+  status: 'requested' | 'connected' | 'not_required'
+}
+export type OperationCommandDocument = {
+  command_lead: string
+  phase: OperationPhase
+  situation_summary: string
+  mission: string
+  intent: string
+  next_review_at: string | null
+  phase_notes: Record<OperationPhase, string>
+  staff_positions: OperationStaffPosition[]
+  advisors: OperationAdvisor[]
+  orders: OperationOrder[]
+  reports: OperationReport[]
+}
+export type OperationCommandRecord = {
+  event_id: number
+  revision: number
+  document: OperationCommandDocument
+  updated_at: string | null
+}
 export type OperationLocation = {
   address: string
   label: string

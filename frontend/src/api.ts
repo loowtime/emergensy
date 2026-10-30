@@ -2,6 +2,8 @@ import type {
   AddressSuggestion,
   EventDraft,
   EventStatus,
+  OperationCommandDocument,
+  OperationCommandRecord,
   RiskEvent,
   SituationLogEntry,
   SituationLogFilters,
@@ -196,6 +198,35 @@ export async function updateStaffProtocol(
     throw new ApiError('Dieses Protokoll wurde zwischenzeitlich geändert. Lade die aktuelle Fassung und wiederhole deine Änderungen.', 409)
   }
   if (!response.ok) throw new ApiError('Änderungen am Stabsprotokoll konnten nicht gespeichert werden', response.status)
+  return response.json()
+}
+
+export async function loadOperationCommand(
+  token: string,
+  eventId: number,
+): Promise<OperationCommandRecord> {
+  const response = await fetch(`${API_URL}/api/operations/${eventId}/command`, {
+    headers: { Authorization: 'Bearer ' + token },
+  })
+  if (!response.ok) throw new ApiError('Einsatzführung konnte nicht geladen werden', response.status)
+  return response.json()
+}
+
+export async function saveOperationCommand(
+  token: string,
+  eventId: number,
+  expectedRevision: number,
+  document: OperationCommandDocument,
+): Promise<OperationCommandRecord> {
+  const response = await fetch(`${API_URL}/api/operations/${eventId}/command`, {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expected_revision: expectedRevision, document }),
+  })
+  if (response.status === 409) {
+    throw new ApiError('Die Einsatzführung wurde zwischenzeitlich geändert. Bitte neu laden.', 409)
+  }
+  if (!response.ok) throw new ApiError('Einsatzführung konnte nicht gespeichert werden', response.status)
   return response.json()
 }
 
