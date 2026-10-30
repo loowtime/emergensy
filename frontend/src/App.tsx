@@ -8,12 +8,15 @@ import { IncidentList } from './features/events/IncidentList'
 import { IncidentMap } from './features/events/IncidentMap'
 import { SituationLogPanel } from './features/situation-log/SituationLogPanel'
 import { StaffProtocolPage } from './features/staff-protocol/StaffProtocolPage'
+import { OperationsPage } from './features/operations/OperationsPage'
 import type { ApiConnectionState, EventStatus, RiskEvent } from './types'
 import './App.css'
 
 function App() {
-  const [activePage, setActivePage] = useState<'overview' | 'protocol'>(() =>
-    window.location.hash === '#situation-log' ? 'protocol' : 'overview',
+  const [activePage, setActivePage] = useState<'overview' | 'protocol' | 'operations'>(() =>
+    window.location.hash === '#situation-log'
+      ? 'protocol'
+      : window.location.hash === '#operations' ? 'operations' : 'overview',
   )
   const [token, setToken] = useState<string | null>(null)
   const [loginError, setLoginError] = useState('')
@@ -27,7 +30,11 @@ function App() {
 
   useEffect(() => {
     function syncPageFromLocation() {
-      setActivePage(window.location.hash === '#situation-log' ? 'protocol' : 'overview')
+      setActivePage(
+        window.location.hash === '#situation-log'
+          ? 'protocol'
+          : window.location.hash === '#operations' ? 'operations' : 'overview',
+      )
     }
     window.addEventListener('hashchange', syncPageFromLocation)
     window.addEventListener('popstate', syncPageFromLocation)
@@ -37,14 +44,10 @@ function App() {
     }
   }, [])
 
-  function navigateTo(target: 'overview' | 'protocol' | 'incidents' | 'map') {
-    const hash = target === 'protocol'
-      ? '#situation-log'
-      : target === 'incidents' || target === 'map'
-        ? `#${target}`
-        : '#overview'
+  function navigateTo(target: 'overview' | 'protocol' | 'operations' | 'incidents' | 'map') {
+    const hash = target === 'protocol' ? '#situation-log' : `#${target}`
     window.history.pushState(null, '', hash)
-    setActivePage(target === 'protocol' ? 'protocol' : 'overview')
+    setActivePage(target === 'protocol' ? 'protocol' : target === 'operations' ? 'operations' : 'overview')
     if (target === 'incidents' || target === 'map') {
       window.setTimeout(() => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' }), 0)
     } else {
@@ -172,6 +175,9 @@ function App() {
         <a className="rail-button" href="#map" title="Lagekarte" aria-label="Lagekarte" onClick={(event) => { event.preventDefault(); navigateTo('map') }}>
           <IconMap2 size={19} stroke={1.8} />
         </a>
+        <a className={activePage === 'operations' ? 'rail-button rail-button--active' : 'rail-button'} href="#operations" title="Einsatzführung" aria-label="Einsatzführung" aria-current={activePage === 'operations' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateTo('operations') }}>
+          <Activity size={19} strokeWidth={1.8} />
+        </a>
         <a className={activePage === 'protocol' ? 'rail-button rail-button--active' : 'rail-button'} href="#situation-log" title="Stabsprotokoll" aria-label="Stabsprotokoll" aria-current={activePage === 'protocol' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigateTo('protocol') }}>
           <IconClipboardText size={19} stroke={1.8} />
         </a>
@@ -181,12 +187,12 @@ function App() {
         </button>
       </aside>
 
-      <main className="workspace" id={activePage === 'overview' ? 'overview' : 'staff-protocol'}>
+      <main className="workspace" id={activePage === 'overview' ? 'overview' : activePage === 'operations' ? 'operations' : 'staff-protocol'}>
         <header className="topbar">
           <div className="breadcrumb">
             <span>RISKPILOT</span>
             <span className="breadcrumb-slash">/</span>
-            <strong>{activePage === 'protocol' ? 'Stabsprotokoll' : 'Einsatzübersicht'}</strong>
+            <strong>{activePage === 'protocol' ? 'Stabsprotokoll' : activePage === 'operations' ? 'Einsatzführung' : 'Einsatzübersicht'}</strong>
           </div>
           <div className="topbar-right">
             <div className={`connection-pill connection-pill--${apiState}`}>
@@ -262,6 +268,8 @@ function App() {
         </section>
         <SituationLogPanel token={token} events={events} onSessionExpired={handleSessionExpired} onNotice={setNotice} />
           </>
+        ) : activePage === 'operations' ? (
+          <OperationsPage token={token} events={events} onSessionExpired={handleSessionExpired} onNotice={setNotice} />
         ) : (
           <StaffProtocolPage token={token} onSessionExpired={handleSessionExpired} onNotice={setNotice} />
         )}

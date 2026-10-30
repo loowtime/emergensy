@@ -28,5 +28,8 @@ Kürzel und Teilnehmende werden manuell eingegeben; das Protokoll ist kein manip
 - `src/api.ts` bündelt typisierte Backend-Aufrufe; `src/types.ts` enthält gemeinsame Domänentypen.
 - `src/features/auth/` enthält die Admin-Anmeldung samt eigenen Styles.
 - `src/features/events/` enthält Ereigniserstellung, Lagekarte, Ereignisliste und Hamburger Einsatzorte.
+- `src/features/operations/` enthält die ereignisgebundene Einsatzführung mit Führungsvorgang, Sachgebieten S1–S6, Fachberatungen, Aufträgen und quellengekennzeichneten Lagemeldungen.
 - `src/features/situation-log/` enthält Protokoll, Historie, gemeinsame Darstellung und Druckbericht.
 - Styles liegen bei den jeweiligen Features; `src/App.css` enthält weiterhin die gemeinsamen Dashboard- und Layout-Styles.
+
+Die Einsatzführungsseite orientiert sich am Führungsvorgang und an der Stabsorganisation der FwDV 100 (Ausgabe 1999). Das ist eine allgemeine fachliche Orientierung und keine spezifische Hamburger Dienstanweisung; vor realer Nutzung sind die aktuellen örtlichen Vorgaben zu prüfen. Die Seite ersetzt keine Ausbildung oder Entscheidungen der verantwortlichen Einsatzleitung. Die aktuelle Hamburger Freiwillige Feuerwehr veröffentlicht ergänzende Informationen zu ihrem Bereich Stab unter [feuerwehr-hamburg.de](https://www.feuerwehr-hamburg.de/bereich/stab/).
