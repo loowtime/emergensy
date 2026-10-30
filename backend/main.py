@@ -23,21 +23,28 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 app = FastAPI()
 DATABASE_PATH = Path(__file__).with_name("riskpilot.db")
 RISKPILOT_ENV = os.getenv("RISKPILOT_ENV", "development").strip().lower()
-if RISKPILOT_ENV not in {"development", "production"}:
-    raise RuntimeError("RISKPILOT_ENV muss 'development' oder 'production' sein")
-
-ADMIN_USERNAME = os.getenv("RISKPILOT_ADMIN_USER", "admin" if RISKPILOT_ENV == "development" else "")
+ADMIN_USERNAME = os.getenv(
+    "RISKPILOT_ADMIN_USER", "admin" if RISKPILOT_ENV == "development" else ""
+).strip()
 ADMIN_PASSWORD = os.getenv("RISKPILOT_ADMIN_PASSWORD", "admin" if RISKPILOT_ENV == "development" else "")
-if RISKPILOT_ENV == "production" and (
-    not ADMIN_USERNAME
-    or ADMIN_USERNAME == "admin"
-    or len(ADMIN_PASSWORD) < 16
-    or ADMIN_PASSWORD == "admin"
-):
-    raise RuntimeError(
-        "Produktionsbetrieb erfordert RISKPILOT_ADMIN_USER != 'admin' "
-        "und ein RISKPILOT_ADMIN_PASSWORD mit mindestens 16 Zeichen"
-    )
+
+
+def validate_security_configuration(environment: str, username: str, password: str) -> None:
+    if environment not in {"development", "production"}:
+        raise RuntimeError("RISKPILOT_ENV muss 'development' oder 'production' sein")
+    if environment == "production" and (
+        not username
+        or username.casefold() == "admin"
+        or len(password) < 16
+        or not password.strip()
+    ):
+        raise RuntimeError(
+            "Produktionsbetrieb erfordert RISKPILOT_ADMIN_USER != 'admin' "
+            "und ein RISKPILOT_ADMIN_PASSWORD mit mindestens 16 Zeichen"
+        )
+
+
+validate_security_configuration(RISKPILOT_ENV, ADMIN_USERNAME, ADMIN_PASSWORD)
 
 SESSION_TTL_SECONDS = 2 * 60 * 60
 LOGIN_WINDOW_SECONDS = 15 * 60
