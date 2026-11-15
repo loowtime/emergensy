@@ -397,6 +397,8 @@ class StaffProtocolRisk(StaffProtocolInput):
                 raise ValueError("Akzeptierte Risiken benötigen die Behandlungsstrategie 'accept'")
             if not self.accepted_by.strip() or not self.acceptance_rationale.strip():
                 raise ValueError("Akzeptierte Risiken benötigen Begründung und freigebende Person")
+        if self.residual_probability * self.residual_impact > self.probability * self.impact:
+            raise ValueError("Restrisiko darf das Bruttorisiko nicht ueberschreiten")
         return self
 
 
