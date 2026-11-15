@@ -53,6 +53,22 @@ Das Dashboard ist danach unter `http://localhost:5173` erreichbar. Die FastAPI-D
 - Ereignisse löschen: `DELETE /api/events/{id}` (Anmeldung erforderlich)
 - Hamburger Adressvorschläge: `GET /api/locations/search?q=...` (Anmeldung erforderlich)
 - Stabsprotokoll: `GET` und `POST /api/situation-log` sowie `GET /api/situation-log/report` (Anmeldung erforderlich; Filter nach Typ, Ereignis, Datum und Text; Einträge werden über die Anwendung nicht geändert oder gelöscht)
-- Die SQLite-Tabelle wird beim Start angelegt; ein separates Migrationssystem oder eine automatisierte Test-Suite ist derzeit nicht eingerichtet.
+- Die SQLite-Tabelle wird beim Start angelegt; Fremdschluessel und WAL-Modus sind aktiviert. Eine automatisierte Test-Suite liegt unter backend/tests/ (pytest, siehe backend/requirements-dev.txt).
 - Bestehende Ereignisdaten bleiben erhalten. Bereits vorhandene Orte außerhalb der neuen Hamburger Auswahlliste werden nicht automatisch verändert.
 - Die Karte lädt OpenStreetMap-Kacheln über das Internet; Suchtexte zur Adressvervollständigung werden separat an Photon übermittelt.
+
+## Konfiguration (.env)
+
+Pfade, URLs und Zugangsdaten werden ueber Umgebungsvariablen konfiguriert. Vorlage: backend/.env.example und frontend/.env.example.
+
+Variablen: RISKPILOT_ENV, RISKPILOT_ADMIN_USER, RISKPILOT_ADMIN_PASSWORD, RISKPILOT_DATABASE_PATH, RISKPILOT_PHOTON_URL, RISKPILOT_CORS_ORIGINS, RISKPILOT_LOG_LEVEL.
+
+## Risikomatrix (Forschungsrisiken)
+
+Brutto- und Restrisiko auf 5x5-Matrix (Eintritt x Auswirkung, 1-5). Score = Produkt. Schwellen: 1-4 Niedrig, 5-9 Beobachten, 10-15 Hoch, 16-25 Kritisch. Restrisiko darf Bruttorisiko nicht ueberschreiten. Kanonische Implementierung: backend/risk_metrics.py (Tests: backend/tests/).
+
+## Betriebsdienste
+
+- Health-Check: GET /api/health (DB-Ping + Umgebung).
+- Strukturiertes Logging nach stdout (Level ueber RISKPILOT_LOG_LEVEL).
+- FastAPI-Dokumentation (/docs, /openapi.json) nur im Entwicklungsmodus aktiv.
