@@ -1,10 +1,12 @@
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
 import sqlite3
 import ssl
+import threading
 import time
 from contextlib import closing
 from datetime import date, datetime, timezone
@@ -18,16 +20,34 @@ from urllib.request import Request as URLRequest, urlopen
 import certifi
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-app = FastAPI()
-DATABASE_PATH = Path(__file__).with_name("riskpilot.db")
-RISKPILOT_ENV = os.getenv("RISKPILOT_ENV", "development").strip().lower()
+logging.basicConfig(
+    level=os.getenv("RISKPILOT_LOG_LEVEL", "INFO").strip().upper() or "INFO",
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("riskpilot")
+
+RISKPILOT_ENV_BOOTSTRAP = os.getenv("RISKPILOT_ENV", "development").strip().lower()
+app = FastAPI(
+    title="RiskPilot",
+    version="0.1.0",
+    description="Lokales Dashboard fuer Ereignisuebersicht und Risikomanagement (Forschungsprototyp).",
+    docs_url="/docs" if RISKPILOT_ENV_BOOTSTRAP == "development" else None,
+    redoc_url="/redoc" if RISKPILOT_ENV_BOOTSTRAP == "development" else None,
+    openapi_url="/openapi.json" if RISKPILOT_ENV_BOOTSTRAP == "development" else None,
+)
+DATABASE_PATH = Path(__file__).with_name(
+    os.getenv("RISKPILOT_DATABASE_PATH", "riskpilot.db")
+)
+RISKPILOT_ENV = RISKPILOT_ENV_BOOTSTRAP
 ADMIN_USERNAME = os.getenv(
     "RISKPILOT_ADMIN_USER", "admin" if RISKPILOT_ENV == "development" else ""
 ).strip()
-ADMIN_PASSWORD = os.getenv("RISKPILOT_ADMIN_PASSWORD", "admin" if RISKPILOT_ENV == "development" else "")
-
+ADMIN_PASSWORD = os.getenv(
+    "RISKPILOT_ADMIN_PASSWORD", "admin" if RISKPILOT_ENV == "development" else ""
+)
 
 def validate_security_configuration(environment: str, username: str, password: str) -> None:
     if environment not in {"development", "production"}:
@@ -52,17 +72,20 @@ LOGIN_LOCK_SECONDS = 15 * 60
 MAX_LOGIN_ATTEMPTS = 5
 HAMBURG_BOUNDS = (53.39, 53.75, 9.73, 10.33)
 active_sessions: dict[str, float] = {}
+active_sessions_lock = threading.Lock()
 geocode_cache: dict[str, tuple[float, list[dict[str, str | float]]]] = {}
 
 
 def get_connection():
-    connection = sqlite3.connect(DATABASE_PATH)
+    connection = sqlite3.connect(DATABASE_PATH, timeout=30)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 30000")
     return connection
-
 
 def initialize_database():
     with closing(get_connection()) as connection:
+        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute(
             """CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,9 +186,11 @@ def initialize_database():
 
 initialize_database()
 
+CORS_ORIGINS = [origin.strip() for origin in os.getenv("RISKPILOT_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()]
+PHOTON_URL = os.getenv("RISKPILOT_PHOTON_URL", "https://photon.komoot.io/api/").strip()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
@@ -519,11 +544,12 @@ def require_admin(
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="Anmeldung erforderlich")
-    expires_at = active_sessions.get(token)
-    if expires_at is None or expires_at <= time.monotonic():
-        active_sessions.pop(token, None)
-        raise HTTPException(status_code=401, detail="Sitzung abgelaufen")
-    return token
+    with active_sessions_lock:
+        expires_at = active_sessions.get(token)
+        if expires_at is None or expires_at <= time.monotonic():
+            active_sessions.pop(token, None)
+            raise HTTPException(status_code=401, detail="Sitzung abgelaufen")
+        return token
 
 
 @app.post("/api/auth/login")
@@ -581,22 +607,26 @@ def login_admin(credentials: AdminLogin, request: Request):
                     detail="Zu viele Anmeldeversuche. Anmeldung ist 15 Minuten gesperrt.",
                     headers={"Retry-After": str(LOGIN_LOCK_SECONDS)},
                 )
+            logger.warning("failed login attempt from %s", request_client_key(request))
             raise HTTPException(status_code=401, detail="Benutzername oder Passwort falsch")
         connection.execute("DELETE FROM login_attempts WHERE client_key = ?", (client_key,))
         connection.commit()
 
     now = time.monotonic()
-    expired_tokens = [token for token, expiry in active_sessions.items() if expiry <= now]
-    for token in expired_tokens:
-        del active_sessions[token]
-    access_token = secrets.token_urlsafe(32)
-    active_sessions[access_token] = now + SESSION_TTL_SECONDS
+    with active_sessions_lock:
+        expired_tokens = [token for token, expiry in active_sessions.items() if expiry <= now]
+        for token in expired_tokens:
+            del active_sessions[token]
+        logger.info("successful login from %s", request_client_key(request))
+        access_token = secrets.token_urlsafe(32)
+        active_sessions[access_token] = now + SESSION_TTL_SECONDS
     return {"access_token": access_token, "token_type": "bearer"}
 
 
 @app.post("/api/auth/logout")
 def logout_admin(token: str = Depends(require_admin)):
-    active_sessions.pop(token, None)
+    with active_sessions_lock:
+        active_sessions.pop(token, None)
     return {"message": "Abgemeldet"}
 
 
@@ -815,13 +845,14 @@ def create_staff_protocol(protocol: StaffProtocolDocument, _: str = Depends(requ
         connection.execute(
             """INSERT INTO staff_protocol_revisions
                (protocol_id, revision, changed_by, snapshot_json, created_at)
-               VALUES (?, 1, 'Admin', ?, ?)""",
-            (protocol_id, protocol_json, timestamp),
+               VALUES (?, 1, ?, ?, ?)""",
+            (protocol_id, ADMIN_USERNAME or 'Admin', protocol_json, timestamp),
         )
         connection.commit()
         row = connection.execute(
             "SELECT * FROM staff_protocols WHERE id = ?", (protocol_id,)
         ).fetchone()
+    logger.info("staff protocol created id=%s", protocol_id)
     return serialize_staff_protocol(row)
 
 
@@ -878,13 +909,14 @@ def update_staff_protocol(
         connection.execute(
             """INSERT INTO staff_protocol_revisions
                (protocol_id, revision, changed_by, snapshot_json, created_at)
-               VALUES (?, ?, 'Admin', ?, ?)""",
-            (protocol_id, revision, protocol_json, timestamp),
+               VALUES (?, ?, ?, ?, ?)""",
+            (protocol_id, revision, ADMIN_USERNAME or 'Admin', protocol_json, timestamp),
         )
         connection.commit()
         row = connection.execute(
             "SELECT * FROM staff_protocols WHERE id = ?", (protocol_id,)
         ).fetchone()
+    logger.info("staff protocol updated id=%s revision=%s", protocol_id, revision)
     return serialize_staff_protocol(row)
 
 
@@ -990,6 +1022,7 @@ def save_operation_command(
             (event_id, revision, document_json, timestamp),
         )
         connection.commit()
+    logger.info("operation command saved event_id=%s revision=%s", event_id, revision)
     return serialize_operation_command(
         event_id, revision, json.loads(document_json), timestamp
     )
@@ -1040,7 +1073,7 @@ def search_hamburg_locations(
         }
     )
     request = URLRequest(
-        f"https://photon.komoot.io/api/?{parameters}",
+        f"{PHOTON_URL}?{parameters}",
         headers={"User-Agent": "RiskPilotHamburg/1.0 (local emergency response dashboard)"},
     )
     try:
@@ -1108,6 +1141,17 @@ def search_hamburg_locations(
     while len(geocode_cache) > 256:
         geocode_cache.pop(next(iter(geocode_cache)))
     return {"suggestions": suggestions, "attribution": "Photon · OpenStreetMap"}
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Interner Serverfehler"})
+
+@app.get("/api/health")
+def health():
+    with closing(get_connection()) as connection:
+        connection.execute("SELECT 1").fetchone()
+    return {"status": "ok", "environment": RISKPILOT_ENV}
 
 
 @app.get("/")
